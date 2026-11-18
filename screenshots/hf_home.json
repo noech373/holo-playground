@@ -1,0 +1,22 @@
+[
+  {
+    "name": "models",
+    "element": "the 'Models' link in the top navigation bar, left of 'Datasets'",
+    "box": [962, 124, 1056, 154]
+  },
+  {
+    "name": "settings_gear",
+    "element": "the gear icon to the left of 'Settings' in the left sidebar",
+    "box": [13, 504, 36, 525]
+  },
+  {
+    "name": "close_card",
+    "element": "the small 'x' close button at the top right of the 'Inference Providers Powered by OpenRouter' card",
+    "box": [1312, 349, 1336, 373]
+  },
+  {
+    "name": "qwen_heart",
+    "element": "the heart icon showing the likes count '20.4k' of the trending model 'Qwen/Qwen3.8-27B'",
+    "box": [1785, 463, 1804, 479]
+  }
+]
