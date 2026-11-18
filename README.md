@@ -19,28 +19,28 @@ It sweeps the number of tokens the image is encoded into (`--image-max-tokens`) 
 
 One 1897×963 screenshot of the Hugging Face home page, 4 targets from a 94×30 px text link down to a 19×16 px heart icon. Greedy decoding (temperature 0). A *hit* is a click inside the target's bounding box.
 
-| image tokens | model | hits | median dist. to center | prefill tok/s | gen tok/s | latency |
-|---|---|---|---|---|---|---|
-| native (~1964) | 4B | 4/4 | 3.4 px | 15.6 | 6.2 | 131 s |
-| native (~1964) | 9B | 4/4 | 1.6 px | 10.8 | 3.8 | 187 s |
-| 1024 | 4B | 4/4 | 4.2 px | 18.6 | 6.8 | 66 s |
-| 1024 | 9B | 3/4 | 3.0 px | 12.9 | 3.9 | 94 s |
-| 512 | 4B | 3/4 | 5.9 px | 23.2 | 7.0 | 32 s |
-| 512 | 9B | 4/4 | 3.5 px | 15.1 | 4.0 | 50 s |
-| 256 | 4B | 2/4 | 13.0 px | 28.2 | 7.0 | 18 s |
-| 256 | 9B | 2/4 | 19.8 px | 16.4 | 3.5 | 31 s |
-| 128 | 4B | 0/4 | 132.6 px | 31.2 | 7.2 | 12 s |
-| 128 | 9B | 1/4 | 27.4 px | 18.2 | 4.0 | 21 s |
+| `--image-max-tokens` | image tokens | model | hits | median dist. to center | prefill | gen tok/s | latency |
+|---|---|---|---|---|---|---|---|
+| default (4096) | 1770 | 4B | 4/4 | 3.4 px | 128 s | 6.2 | 131 s |
+| default (4096) | 1770 | 9B | 4/4 | 1.6 px | 182 s | 3.8 | 187 s |
+| 1024 | 968 | 4B | 4/4 | 4.2 px | 63 s | 6.8 | 66 s |
+| 1024 | 968 | 9B | 3/4 | 3.0 px | 90 s | 3.9 | 94 s |
+| 512 | 496 | 4B | 3/4 | 5.9 px | 30 s | 7.0 | 32 s |
+| 512 | 496 | 9B | 4/4 | 3.5 px | 46 s | 4.0 | 50 s |
+| 256 | 242 | 4B | 2/4 | 13.0 px | 15 s | 7.0 | 18 s |
+| 256 | 242 | 9B | 2/4 | 19.8 px | 27 s | 3.5 | 31 s |
+| 128 | 120 | 4B | 0/4 | 132.6 px | 10 s | 7.2 | 12 s |
+| 128 | 120 | 9B | 1/4 | 27.4 px | 17 s | 4.0 | 21 s |
 
-For the native budget, ~1964 is the full prompt length in tokens, text included.
+`--image-max-tokens` is a cap: llama.cpp shrinks the image until it fits, then rounds each side down to a multiple of 32 px (one token per 32×32 px), so the *image tokens* actually produced land 3–6 % under it. Without the flag, llama.cpp applies its own cap of 4096 tokens for Qwen-VL models: this screenshot stays under it and is only rounded to 1888×960 px, i.e. 1770 tokens. Every prompt also carries ~186 text tokens (instruction and JSON schema), the same for every budget.
 
 The raw data is in [results/](results/): one `results.csv` per model, plus server logs and screenshots annotated with every click (`clicks-<budget>.png`).
 
 ### Caveats
 
 - **4 targets on 1 screenshot is a smoke test, not a benchmark.** Each target is 25 % of the hit rate. Some results are likely noise: the 9B misses the heart icon at 1024 tokens but hits it at 512, and two misses are within 1 px of the box edge. That's why the median distance to the target center is reported next to the hit count.
-- **Prefill speed rises as the image shrinks** (31 vs. 16 tok/s for the 4B), because attention cost per token grows with sequence length. Compare latencies, not tok/s, across budgets.
-- **The 4B "native" timings drifted** from 18.7 to 12.3 prefill tok/s over 4 requests, probably CPU throttling. Treat its 131 s as pessimistic.
+- **Prefill time grows faster than the token count.** Each token attends to all the previous ones, so the cost per token rises with the prompt length: the 4B processes ~31 tokens/s at 128 tokens but ~16 at full resolution. That's why the table reports prefill in seconds, not tokens/s, which aren't comparable across budgets.
+- **The 4B default-budget timings drifted** from 18.7 to 12.3 prefill tok/s over 4 requests, probably CPU throttling. Treat its 131 s as pessimistic.
 - **The published screenshot was edited after the runs**: the browser bookmarks, profile icons and Hugging Face username are painted over. No target is affected, but re-running on this image may not reproduce the exact clicks.
 - llama.cpp warns that Qwen-VL-based models (which Holo is) need at least 1024 image tokens for reliable grounding. The results above show where that floor actually starts to bite.
 
@@ -74,7 +74,7 @@ Targets are a JSON list of `{name, element, box: [x0, y0, x1, y1]}`, where `elem
 **Rebuild the table and chart** from one or more sweeps:
 
 ```bash
-uv run holo-report results/*/results.csv
+uv run holo-report results/*/results.csv --screenshot screenshots/hf_home.png
 ```
 
 **Locate a single element** with a `llama-server` already running on port 8080:
