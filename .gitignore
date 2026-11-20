@@ -12,3 +12,9 @@ wheels/
 # Scratch notebooks and one-off outputs
 *.ipynb
 *_click.png
+
+
+.env
+
+# agent runs (screenshots, traces)
+runs/
