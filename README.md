@@ -11,7 +11,7 @@ It sweeps the number of tokens the image is encoded into (`--image-max-tokens`) 
 
 - **Image tokens drive the latency.** Encoding the image and processing its tokens before the   first output token (the *prefill*) accounts for 80–98 % of each request. The answer itself is   only ~16 tokens. Halving the image budget roughly halves the latency.
 - **Accuracy holds down to ~512 tokens, then collapses.** At 512 tokens, the 9B is still within 4 px of the target center (median), on targets as small as 19×16 px. At 128 tokens, the 4B stops being imprecise and starts being wrong: it clicks on unrelated elements, up to 570 px from the target.
-- **The 9B degrades more gracefully.** At 128 tokens it misses 3 targets out of 4, but never by more than 41 px. Its larger language model seems to recover the page layout even when the image is too coarse to pinpoint a small icon.
+- **The 9B degrades more gracefully.** At 128 tokens it misses 3 targets out of 4, but never by more than 53 px from the target center, against 570 px for the 4B. Its larger language model seems to recover the page layout even when the image is too coarse to pinpoint a small icon.
 - **Best trade-off here: 9B at 512 tokens.** It hits 4/4 targets in 50 s, faster than the 4B at 1024 tokens (66 s) for a similar or better accuracy. On this machine, a bigger model looking at a smaller image beats a smaller model looking at a bigger one.
 - **Generation speed follows the weight size.** The 9B generates tokens 1.8× slower than the 4B, and its weights are 1.8× larger (5.6 vs. 3.1 GB): each new token re-reads every weight from RAM, so generation is memory-bandwidth bound. Prefill, which processes tokens in batches, is only 1.4–1.7× slower. I haven't isolated why yet.
 
@@ -38,7 +38,7 @@ The raw data is in [results/](results/): one `results.csv` per model, plus serve
 
 ### Caveats
 
-- **4 targets on 1 screenshot is a smoke test, not a benchmark.** Each target is 25 % of the hit rate. Some results are likely noise: the 9B misses the heart icon at 1024 tokens but hits it at 512, and two misses are within 1 px of the box edge. That's why the median distance to the target center is reported next to the hit count.
+- **4 targets on 1 screenshot is a smoke test, not a benchmark.** Each target is 25 % of the hit rate. Some results are likely noise: the 9B misses the heart icon at 1024 tokens but hits it at 512, and two misses are within 1.5 px of the box edge (0.04 and 1.3 px). That's why the median distance to the target center is reported next to the hit count.
 - **Prefill time grows faster than the token count.** Each token attends to all the previous ones, so the cost per token rises with the prompt length: the 4B processes ~31 tokens/s at 128 tokens but ~16 at full resolution. That's why the table reports prefill in seconds, not tokens/s, which aren't comparable across budgets.
 - **The 4B default-budget timings drifted** from 18.7 to 12.3 prefill tok/s over 4 requests, probably CPU throttling. Treat its 131 s as pessimistic.
 - **The published screenshot was edited after the runs**: the browser bookmarks, profile icons and Hugging Face username are painted over. No target is affected, but re-running on this image may not reproduce the exact clicks.

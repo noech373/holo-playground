@@ -9,37 +9,14 @@ import argparse
 import csv
 import json
 import math
-import subprocess
 import time
-import urllib.request
 from collections.abc import Iterator
 from pathlib import Path
 
 from openai import OpenAI
 
 from holo_playground.locate import Screenshot, draw_clicks, locate
-
-LLAMA_SERVER = Path.home() / "llama.cpp/build/bin/llama-server"
-MODELS_DIR = Path.home() / "models"
-MODELS = {
-    "4b": (
-        MODELS_DIR / "holo-3.1-4b/Holo-3.1-4B.Q4_K_M.gguf",
-        MODELS_DIR / "holo-3.1-4b/Holo-3.1-4B.mmproj-Q8_0.gguf",
-    ),
-    "9b": (
-        MODELS_DIR / "holo-3.1-9b/Holo-3.1-9B.Q4_K_M.gguf",
-        MODELS_DIR / "holo-3.1-9b/Holo-3.1-9B.mmproj-Q8_0.gguf",
-    ),
-}
-# Tuned for a 4-core CPU-only machine with ~8 GB of RAM.
-SERVER_FLAGS = [
-    "-c", "8192", "-np", "1", "-t", "4", "-tb", "6",
-    "-fa", "on", "-ctk", "q8_0", "-ctv", "q8_0",
-    "--reasoning-budget", "0",
-    "--no-cache-prompt",
-]
-DEFAULT_BUDGET = "default"
-STARTUP_TIMEOUT_S = 300
+from holo_playground.server import MODELS, server_up, start_server, stop_server
 
 FIELDS = [
     "model", "image_max_tokens", "target", "target_w_px", "target_h_px",
@@ -47,39 +24,6 @@ FIELDS = [
     "prefill_tokens", "prefill_s", "prefill_tok_per_s",
     "gen_tokens", "gen_s", "gen_tok_per_s", "total_s",
 ]
-
-
-def server_up(port: int) -> bool:
-    try:
-        with urllib.request.urlopen(f"http://localhost:{port}/health", timeout=2) as r:
-            return r.status == 200
-    except OSError:
-        return False
-
-
-def start_server(model: str, budget: str, port: int, log: Path) -> subprocess.Popen:
-    gguf, mmproj = MODELS[model]
-    cmd = [str(LLAMA_SERVER), "-m", str(gguf), "-mm", str(mmproj), *SERVER_FLAGS,
-            "--alias", f"holo-3.1-{model}", "--port", str(port)]
-    if budget != DEFAULT_BUDGET:
-        cmd += ["--image-max-tokens", budget]
-    with log.open("w") as log_file:
-        proc = subprocess.Popen(cmd, stdout=log_file, stderr=subprocess.STDOUT)
-    deadline = time.monotonic() + STARTUP_TIMEOUT_S
-    while not server_up(port):
-        if proc.poll() is not None or time.monotonic() > deadline:
-            proc.kill()
-            raise RuntimeError(f"llama-server failed to start, see {log}")
-        time.sleep(2)
-    return proc
-
-
-def stop_server(proc: subprocess.Popen) -> None:
-    proc.terminate()
-    try:
-        proc.wait(timeout=30)
-    except subprocess.TimeoutExpired:
-        proc.kill()
 
 
 def score(x: float, y: float, box: list[int]) -> dict:
@@ -90,7 +34,8 @@ def score(x: float, y: float, box: list[int]) -> dict:
         "target_h_px": y1 - y0,
         "hit": x0 <= x <= x1 and y0 <= y <= y1,
         "center_dist_px": round(math.hypot(x - (x0 + x1) / 2, y - (y0 + y1) / 2), 1),
-        "edge_dist_px": round(math.hypot(max(x0 - x, 0, x - x1), max(y0 - y, 0, y - y1)), 1),
+        # 2 decimals: a miss can be a few hundredths of a pixel outside the box
+        "edge_dist_px": round(math.hypot(max(x0 - x, 0, x - x1), max(y0 - y, 0, y - y1)), 2),
     }
 
 
