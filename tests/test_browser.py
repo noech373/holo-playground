@@ -30,7 +30,7 @@ def bare():
     [(0, 0, (0, 0)), (1000, 1000, (1280, 800)), (500, 500, (640, 400)), (473, 40, (605.44, 32))],
 )
 def test_to_pixels(bare, x, y, expected):
-    assert bare._to_pixels(x, y) == pytest.approx(expected)
+    assert bare.to_pixels(x, y) == pytest.approx(expected)
 
 
 @pytest.mark.parametrize(

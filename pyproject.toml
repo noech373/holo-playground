@@ -21,6 +21,7 @@ holo-locate = "holo_playground.locate:main"
 holo-sweep = "holo_playground.sweep:main"
 holo-report = "holo_playground.report:main"
 holo-serve = "holo_playground.server:main"
+holo-agent = "holo_playground.agent.run:main"
 
 [build-system]
 requires = ["uv_build>=0.13.1,<0.14.0"]

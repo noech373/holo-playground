@@ -19,7 +19,7 @@ class WriteArgs(BaseModel):
     press_enter: bool = Field(default=False, description="Whether to press Enter after typing")
 
 class ScrollArgs(BaseModel):
-    """Scroll the page by about three quarters of the screen (not in H's documented action space)"""
+    """Scroll the page by about three quarters of the screen"""
     tool_name: Literal["scroll"]
     direction: Literal["up", "down"] = Field(description="Direction to scroll")
 

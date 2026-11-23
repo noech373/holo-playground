@@ -78,7 +78,7 @@ class Browser:
 
         match tool_call:
             case ClickArgs(x=x, y=y):
-                px, py = self._to_pixels(x, y)
+                px, py = self.to_pixels(x, y)
                 self.page.mouse.click(px, py)
                 done = f"clicked ({px:.0f}, {py:.0f})"
             case WriteArgs(content=content, press_enter=press_enter):
@@ -120,7 +120,7 @@ class Browser:
             return f"{done}; page unchanged"
         return done
 
-    def _to_pixels(self, x: int, y: int) -> tuple[float, float]:
+    def to_pixels(self, x: int, y: int) -> tuple[float, float]:
         """Model coordinates in [0, COORD_SCALE] -> viewport pixels."""
         return x / COORD_SCALE * self.width, y / COORD_SCALE * self.height
 
