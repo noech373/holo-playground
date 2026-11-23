@@ -1,8 +1,11 @@
 """Start and stop a local llama-server for a Holo model."""
 
+import argparse
+import json
 import subprocess
 import time
 import urllib.request
+from datetime import datetime
 from pathlib import Path
 
 LLAMA_SERVER = Path.home() / "llama.cpp/build/bin/llama-server"
@@ -23,7 +26,8 @@ SERVER_FLAGS = [
     "-fa", "on", "-ctk", "q8_0", "-ctv", "q8_0",
 ]
 DEFAULT_BUDGET = "default"
-STARTUP_TIMEOUT_S = 300
+STARTUP_TIMEOUT_S = 600  # a cold load of the 9B (weights not in the page cache) took >300 s
+STOP_TIMEOUT_S = 10
 
 
 def server_up(port: int) -> bool:
@@ -64,7 +68,9 @@ def start_server(
         cmd += ["--image-max-tokens", budget]
     log.parent.mkdir(parents=True, exist_ok=True)
     with log.open("w") as log_file:
-        proc = subprocess.Popen(cmd, stdout=log_file, stderr=subprocess.STDOUT)
+        # Own session: a Ctrl-C in the terminal reaches only us, and we stop the server once.
+        proc = subprocess.Popen(cmd, stdout=log_file, stderr=subprocess.STDOUT,
+                                start_new_session=True)
     deadline = time.monotonic() + STARTUP_TIMEOUT_S
     while not server_up(port):
         if proc.poll() is not None or time.monotonic() > deadline:
@@ -77,8 +83,63 @@ def start_server(
 
 
 def stop_server(proc: subprocess.Popen) -> None:
+    """SIGTERM, then SIGKILL if llama-server hangs in its shutdown or a Ctrl-C cuts the wait.
+
+    Without the KeyboardInterrupt case, a second Ctrl-C skipped kill() and left an orphan
+    llama-server holding 2.8 GB of RAM, unseen, during later measurements (2026-11-23).
+    """
     proc.terminate()
     try:
-        proc.wait(timeout=30)
-    except subprocess.TimeoutExpired:
+        proc.wait(timeout=STOP_TIMEOUT_S)
+    except (subprocess.TimeoutExpired, KeyboardInterrupt):
         proc.kill()
+        proc.wait()
+
+
+def warm_up(port: int) -> float:
+    """Send a tiny text-only request and return its duration in seconds.
+
+    llama-server mmaps the weights: they are read from disk on first use, and the kernel may
+    drop them again under memory pressure. Every token goes through every layer, so one token
+    pages the whole LLM in. Text-only: it shares no prefix with a real request, so it leaves
+    nothing useful in the KV cache. (It does not touch the vision encoder, which is small.)
+    """
+    body = json.dumps({"messages": [{"role": "user", "content": "hi"}], "max_tokens": 1}).encode()
+    request = urllib.request.Request(
+        f"http://localhost:{port}/v1/chat/completions",
+        data=body,
+        headers={"Content-Type": "application/json"}
+    )
+    start = time.perf_counter()
+    with urllib.request.urlopen(request, timeout=STARTUP_TIMEOUT_S) as r:
+        r.read()
+    return time.perf_counter() - start
+
+
+def main() -> None:
+    """holo-serve: run llama-server for the agent until Ctrl-C."""
+    parser = argparse.ArgumentParser(description="Serve a Holo model for the agent until Ctrl-C.")
+    parser.add_argument("--model", choices=sorted(MODELS), default="9b")
+    parser.add_argument("--budget", default="512", help="--image-max-tokens, or 'default'")
+    parser.add_argument("--port", type=int, default=8080)
+    parser.add_argument("--no-cache", action="store_true",
+                        help="re-process the whole prompt at every request (to measure without the KV cache)")
+    parser.add_argument("--log", type=Path, help="server log (default: runs/server-<stamp>.log)")
+    args = parser.parse_args()
+
+    log = args.log or Path("runs") / f"server-{datetime.now():%Y%m%d-%H%M%S}.log"
+    cache = "off" if args.no_cache else "on"
+    print(f"starting {args.model} (image budget {args.budget}, KV cache {cache}), log in {log} ...",
+            flush=True)
+    # KV cache on by default: the agent appends messages step after step and re-uses it.
+    proc = start_server(args.model, args.budget, args.port, log, cache_prompt=not args.no_cache)
+    try:
+        print(f"warm-up: {warm_up(args.port):.1f} s", flush=True)
+        print(f"ready: http://localhost:{args.port}/v1  model alias holo-3.1-{args.model}  (Ctrl-C to stop)",
+                flush=True)
+        proc.wait()
+        print(f"llama-server exited with code {proc.returncode}, see {log}")
+    except KeyboardInterrupt:
+        print("stopping llama-server ...")
+    finally:
+        stop_server(proc)
