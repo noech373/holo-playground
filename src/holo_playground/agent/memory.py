@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 
 from holo_playground.agent.policy import PolicyOutput
-from holo_playground.locate import Screenshot
+from holo_playground.screen import Screenshot
 
 EVICTED = "[screenshot evicted]"
 

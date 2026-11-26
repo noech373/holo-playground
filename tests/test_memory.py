@@ -8,7 +8,7 @@ import pytest
 from holo_playground.agent.actions import Step
 from holo_playground.agent.memory import EVICTED, Memory
 from holo_playground.agent.policy import PolicyOutput
-from holo_playground.locate import Screenshot
+from holo_playground.screen import Screenshot
 
 TASK = "Open the Models page of Hugging Face."
 

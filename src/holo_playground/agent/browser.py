@@ -1,6 +1,7 @@
 """Playwright browser environment: execute agent actions and return screenshots."""
 
 import io
+from contextlib import suppress
 from pathlib import Path
 from typing import Self
 from urllib.parse import urlparse
@@ -10,7 +11,7 @@ from playwright.sync_api import TimeoutError as PlaywrightTimeout
 from playwright.sync_api import sync_playwright
 
 from holo_playground.agent.actions import ClickArgs, ScrollArgs, WriteArgs
-from holo_playground.locate import COORD_SCALE, Screenshot
+from holo_playground.screen import Screenshot, to_pixels
 
 SETTLE_S = 0.5                  # pause before and after waiting for the network
 NETWORK_IDLE_TIMEOUT_MS = 5000  # some pages never reach network idle: don't wait forever
@@ -36,8 +37,8 @@ class Browser:
     CSS pixels and mouse coordinates are the same thing.
     """
 
-    def __init__(self, allowed_domains: set[str] | frozenset[str], width: int = 1280, height: int = 800,
-                headless: bool = True) -> None:
+    def __init__(self, allowed_domains: set[str] | frozenset[str], width: int = 1280,
+                 height: int = 800, headless: bool = True) -> None:
         self.allowed_domains = allowed_domains
         self.width, self.height = width, height
         self._playwright = sync_playwright().start()
@@ -124,16 +125,15 @@ class Browser:
         return done
 
     def to_pixels(self, x: int, y: int) -> tuple[float, float]:
-        """Model coordinates in [0, COORD_SCALE] -> viewport pixels."""
-        return x / COORD_SCALE * self.width, y / COORD_SCALE * self.height
+        """Model coordinates in [0, 1000] -> viewport pixels."""
+        return to_pixels(x, y, self.width, self.height)
 
     def _settle(self) -> None:
         """Let a navigation start, wait for the network to calm down, let the page render."""
         self.page.wait_for_timeout(SETTLE_S * 1000)
-        try:
+        # Pages with polling or streaming never go idle: carry on after the timeout.
+        with suppress(PlaywrightTimeout):
             self.page.wait_for_load_state("networkidle", timeout=NETWORK_IDLE_TIMEOUT_MS)
-        except PlaywrightTimeout:
-            pass  # pages with polling or streaming never go idle: carry on after the timeout
         self.page.wait_for_timeout(SETTLE_S * 1000)
 
     def _follow_new_tab(self, n_pages_before: int) -> bool:
@@ -162,21 +162,3 @@ class Browser:
         changed = ImageChops.difference(before, after).point(lambda v: 255 if v > PIXEL_DIFF else 0) # type: ignore
         return changed.histogram()[255] < MIN_CHANGED_PIXELS
 
-
-if __name__ == "__main__":
-    shots = Path("runs/browser-check")
-    shots.mkdir(parents=True, exist_ok=True)
-    with Browser({"huggingface.co"}) as browser:
-        browser.reset("https://huggingface.co/Hcompany")
-        browser.screenshot(shots / "0-start.png")
-        checks = [  # the HF header is not sticky: search before scrolling
-            ("click GitHub link", ClickArgs(tool_name="click", element="hcompai GitHub link", x=348, y=204)),
-            ("click Models", ClickArgs(tool_name="click", element="Models link", x=473, y=40)),
-            ("click empty area", ClickArgs(tool_name="click", element="empty area", x=5, y=990)),
-            ("click search box", ClickArgs(tool_name="click", element="search box", x=250, y=40)),
-            ("type a query", WriteArgs(tool_name="write", content="Holo", press_enter=True)),
-            ("scroll down", ScrollArgs(tool_name="scroll", direction="down")),
-        ]
-        for i, (name, action) in enumerate(checks, start=1):
-            print(f"{name:<18} -> {browser.execute(action)}")
-            browser.screenshot(shots / f"{i}-{name.replace(' ', '-')}.png")

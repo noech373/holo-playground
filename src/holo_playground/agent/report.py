@@ -38,7 +38,8 @@ def action(step: dict) -> str:
 
 
 def markdown_table(steps: list[dict], end: dict) -> str:
-    rows = ["| step | action | computed tokens (prompt_n) | cached tokens (cache_n) | prefill | generation | total |",
+    rows = ["| step | action | computed tokens (prompt_n) | cached tokens (cache_n) "
+            "| prefill | generation | total |",
             "|---|---|---|---|---|---|---|"]
     for s in steps:
         rows.append(f"| {s['step']} | {action(s)} | {s['prompt_n']} | {s['cache_n']} | "
@@ -53,7 +54,7 @@ def plot_trajectory(steps: list[dict], run_dir: Path, out: Path) -> None:
     """One thumbnail per step, the click drawn where the model aimed, the action below."""
     fig = Figure(figsize=(3.2 * len(steps), 2.9), dpi=150)
     axes = fig.subplots(1, len(steps), squeeze=False)[0]
-    for ax, s in zip(axes, steps):
+    for ax, s in zip(axes, steps, strict=True):
         with Image.open(run_dir / s["screenshot"]) as img:
             ax.imshow(img)
         if s["x_px"] is not None:
@@ -79,20 +80,22 @@ def plot_step_cost(steps: list[dict], out: Path) -> None:
     gen = [s["gen_ms"] / 1000 for s in steps]
     fig = Figure(figsize=(7.5, 3.8), dpi=150)
     ax = fig.subplots()
-    ax.bar(xs, prefill, width=0.55, color=PREFILL, edgecolor=SURFACE, linewidth=1)  # surface gap between segments
-    ax.bar(xs, gen, width=0.55, bottom=prefill, color=GEN, edgecolor=SURFACE, linewidth=1)  # surface gap between segments
-    for x, s, p, g in zip(xs, steps, prefill, gen):
+    # edgecolor=SURFACE: a thin gap between the two stacked segments
+    ax.bar(xs, prefill, width=0.55, color=PREFILL, edgecolor=SURFACE, linewidth=1)
+    ax.bar(xs, gen, width=0.55, bottom=prefill, color=GEN, edgecolor=SURFACE, linewidth=1)
+    for x, s, p, g in zip(xs, steps, prefill, gen, strict=True):
         ax.annotate(f"{s['prompt_n']:,} computed\n{s['cache_n']:,} cached", (x, p + g),
                     xytext=(0, 4), textcoords="offset points", ha="center", va="bottom",
                     fontsize=8, color=MUTED)
     labels = []
-    for prev, s in zip([None, *steps], steps):
+    for prev, s in zip([None, *steps], steps, strict=False):  # (previous, current) pairs
         # The cache only shrinks when the prompt's prefix changed: here, a screenshot evicted.
         reset = prev is not None and s["cache_n"] < prev["cache_n"] + prev["prompt_n"] - 50
-        labels.append(f"{s['step']}\n{s['tool_call']['tool_name']}" + ("\n(screenshot evicted)" if reset else ""))
+        label = f"{s['step']}\n{s['tool_call']['tool_name']}"
+        labels.append(label + ("\n(screenshot evicted)" if reset else ""))
     ax.set_xticks(list(xs), labels)
     ax.set_ylabel("seconds", color=MUTED)
-    ax.set_ylim(0, max(p + g for p, g in zip(prefill, gen)) * 1.28)
+    ax.set_ylim(0, max(p + g for p, g in zip(prefill, gen, strict=True)) * 1.28)
     ax.grid(axis="y", color=GRID, linewidth=0.8)
     ax.set_axisbelow(True)
     ax.tick_params(colors=MUTED, length=0)

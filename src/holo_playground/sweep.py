@@ -15,7 +15,8 @@ from pathlib import Path
 
 from openai import OpenAI
 
-from holo_playground.locate import Screenshot, draw_clicks, locate
+from holo_playground.locate import draw_clicks, locate
+from holo_playground.screen import Screenshot
 from holo_playground.server import MODELS, server_up, start_server, stop_server
 
 FIELDS = [
@@ -44,7 +45,7 @@ def run_budget(
 ) -> Iterator[dict]:
     for target in targets:
         pred = locate(client, screenshot, target["element"])
-        x, y = screenshot.to_pixels(pred.click)
+        x, y = screenshot.to_pixels(pred.click.x, pred.click.y)
         t = pred.timings
         row = {
             "model": model,
@@ -66,14 +67,17 @@ def run_budget(
         print(
             f"   {target['name']:<14} {'HIT ' if row['hit'] else 'MISS'} ({row['x_px']}, {row['y_px']})"
             f" {row['center_dist_px']} px from center"
-            f" | prefill {row['prefill_tokens']} tok in {row['prefill_s']} s ({row['prefill_tok_per_s']} tok/s)"
+            f" | prefill {row['prefill_tokens']} tok in {row['prefill_s']} s"
+            f" ({row['prefill_tok_per_s']} tok/s)"
             f" | total {row['total_s']} s"
         )
         yield row
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     parser.add_argument("image", type=Path, help="screenshot")
     parser.add_argument("targets", type=Path, help="JSON list of {name, element, box: [x0, y0, x1, y1]}")
     parser.add_argument("--model", choices=MODELS, default="9b")

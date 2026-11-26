@@ -19,6 +19,7 @@ from holo_playground.agent.memory import Memory
 from holo_playground.agent.policy import InvalidStep, TruncatedStep, build_system_prompt, policy
 from holo_playground.agent.tasks import Task, load_tasks
 from holo_playground.agent.trace import Trace
+from holo_playground.server import warm_up
 
 MAX_STEPS = 10
 
@@ -29,6 +30,7 @@ class TrialResult:
     n_steps: int
     stop_reason: str  # "answer" | "max_steps" | "truncated" | "invalid_step"
     visited: list[str] = field(default_factory=list)
+    success: bool | None = None  # set by run_trial; None when the task has no check
 
 
 def run_trial(
@@ -55,13 +57,14 @@ def run_trial(
             trace.end(stop_reason="error", answer=None, success=None,
                       total_s=round(time.perf_counter() - start, 2), error=repr(e))
             raise
-        # success: false for an agent failure (wrong answer, max_steps, truncated), null only
-        # when it cannot be judged (no check, or the error branch above: an infra failure).
-        # reached_page is kept apart: a right answer without reaching the page is a guess.
+        # success: false for an agent failure (wrong answer, max_steps, truncated, invalid_step),
+        # null only when it cannot be judged (no check, or the error branch above: an infra
+        # failure). reached_page is kept apart: a right answer without reaching the page is a guess.
+        result.success = check_answer(result.answer, task.check) if task.check else None
         trace.end(
             stop_reason=result.stop_reason,
             answer=result.answer,
-            success=check_answer(result.answer, task.check) if task.check else None,
+            success=result.success,
             reached_page=(any(task.must_visit in url for url in result.visited)
                           if task.must_visit else None),
             total_s=round(time.perf_counter() - start, 2),
@@ -195,9 +198,7 @@ def main() -> None:
 
     client = OpenAI(base_url=args.base_url, api_key=args.api_key)
     if not args.no_warmup:
-        client.chat.completions.create(
-            model=args.model, max_tokens=1, messages=[{"role": "user", "content": "hi"}]
-        )
+        warm_up(client, args.model)
 
     run_id = datetime.now().strftime("%Y%m%d-%H%M%S")
     root = Path("runs") / run_id
@@ -219,8 +220,7 @@ def main() -> None:
             try:
                 result = run_trial(client, args.model, task, run_dir, keep_last=args.keep_last,
                                    temperature=args.temperature, run_id=run_id, trial=trial)
-                outcome = (result.stop_reason, result.n_steps, result.answer,
-                           check_answer(result.answer, task.check) if task.check else None)
+                outcome = (result.stop_reason, result.n_steps, result.answer, result.success)
             except Exception as e:
                 # One crashed trial must not cost the rest of the night. Its trace already
                 # holds an end line with success: null and the error.
