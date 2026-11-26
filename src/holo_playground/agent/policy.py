@@ -5,6 +5,7 @@ import time
 from dataclasses import dataclass
 
 from openai import OpenAI
+from pydantic import ValidationError
 
 from holo_playground.agent.actions import Step
 
@@ -18,12 +19,14 @@ class TruncatedStep(Exception):
     """The model hit max_tokens: the JSON is cut, the grammar cannot make it valid."""
 
 
+class InvalidStep(Exception):
+    """The output does not parse as a Step: an endpoint that ignores response_format."""
+
+
 @dataclass
 class PolicyOutput:
     step: Step
     raw: str            # exact generated text: goes back into the history as is (KV cache)
-    finish_reason: str
-    usage: dict         # prompt_tokens, completion_tokens, total_tokens
     timings: dict       # llama-server: cache_n, prompt_n, prompt_ms, predicted_n, predicted_ms
     wall_s: float
 
@@ -56,7 +59,6 @@ Older screenshots may be replaced by [screenshot evicted]; your notes from those
 ```
 </output_format>"""
 
-# Each generated token costs ~0.3 s on this CPU (9B, ~3 tok/s); the thought is most of them.
 SHORT_THOUGHT_RULE = "\n- thought: one short sentence."
 
 
@@ -74,7 +76,6 @@ def policy(
     model: str,
     temperature: float = 0.8,
     max_tokens: int = MAX_TOKENS,
-    seed: int | None = None,
 ) -> PolicyOutput:
     """Ask the model for the next step, constrained to the Step schema by the server.
 
@@ -82,7 +83,6 @@ def policy(
         so it also applies to the digits of the click coordinates.
     model: llama-server serves a single model and ignores this name (we pass its --alias);
         a hosted API (e.g. H's) needs the real model name.
-    seed: makes a sampled step reproducible, to replay a run while debugging.
     """
     start = time.perf_counter()
     response = client.chat.completions.create(
@@ -90,7 +90,6 @@ def policy(
         messages=messages,  # type: ignore[arg-type]
         temperature=temperature,
         max_tokens=max_tokens,
-        seed=seed,
         response_format={"type": "json_schema", "json_schema": {"name": "step", "schema": STEP_SCHEMA}},
     )
     wall_s = time.perf_counter() - start
@@ -99,11 +98,13 @@ def policy(
     raw = choice.message.content or ""
     if choice.finish_reason == "length":
         raise TruncatedStep(f"no complete step within {max_tokens} tokens: {raw[-80:]!r}")
+    try:
+        step = Step.model_validate_json(raw)
+    except ValidationError as e:
+        raise InvalidStep(f"{e.error_count()} error(s) in {raw[:80]!r}") from e
     return PolicyOutput(
-        step=Step.model_validate_json(raw),
+        step=step,
         raw=raw,
-        finish_reason=choice.finish_reason,
-        usage=response.usage.model_dump() if response.usage else {},
         timings=(response.model_extra or {}).get("timings", {}),
         wall_s=wall_s,
     )

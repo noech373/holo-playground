@@ -16,7 +16,7 @@ from holo_playground.agent.actions import AnswerArgs, ClickArgs
 from holo_playground.agent.browser import Browser
 from holo_playground.agent.evaluate import check_answer
 from holo_playground.agent.memory import Memory
-from holo_playground.agent.policy import TruncatedStep, build_system_prompt, policy
+from holo_playground.agent.policy import InvalidStep, TruncatedStep, build_system_prompt, policy
 from holo_playground.agent.tasks import Task, load_tasks
 from holo_playground.agent.trace import Trace
 
@@ -27,7 +27,7 @@ MAX_STEPS = 10
 class TrialResult:
     answer: str | None
     n_steps: int
-    stop_reason: str  # "answer" | "max_steps" | "truncated"
+    stop_reason: str  # "answer" | "max_steps" | "truncated" | "invalid_step"
     visited: list[str] = field(default_factory=list)
 
 
@@ -90,6 +90,10 @@ def _loop(client: OpenAI, model: str, task: Task, run_dir: Path, trace: Trace,
                 )
             except TruncatedStep:
                 return TrialResult(None, i, "truncated", visited)
+            except InvalidStep as e:
+                # A format failure of the agent, not an infra crash: success false, not null.
+                print(f"step {i}: invalid step: {e}", flush=True)
+                return TrialResult(None, i, "invalid_step", visited)
 
             tool_call = output.step.tool_call
             t = output.timings
