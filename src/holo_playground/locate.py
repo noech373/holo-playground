@@ -1,7 +1,6 @@
 """Ask a Holo model, served by llama-server, where to click on a screenshot."""
 
 import argparse
-import base64
 import json
 import time
 from dataclasses import dataclass, field
@@ -11,14 +10,13 @@ from openai import OpenAI
 from PIL import Image, ImageDraw
 from pydantic import BaseModel, Field
 
+from holo_playground.screen import COORD_SCALE, Screenshot
+
 # Grounding prompt from https://hub.hcompany.ai/models-api/element-localization.md
 PROMPT = """Localize an element on the GUI image according to the provided target and output a click position.
  * You must output a valid JSON following the format: {schema}
 Your target is:
 {element}"""
-
-COORD_SCALE = 1000
-
 
 class Click(BaseModel):
     x: int = Field(ge=0, le=COORD_SCALE, description="X coordinate as integer in [0, 1000]")
@@ -26,26 +24,6 @@ class Click(BaseModel):
 
 
 CLICK_SCHEMA = Click.model_json_schema()
-
-
-@dataclass
-class Screenshot:
-    path: Path
-    width: int
-    height: int
-    data_uri: str
-
-    @classmethod
-    def load(cls, path: Path) -> "Screenshot":
-        with Image.open(path) as img:
-            (width, height), fmt = img.size, img.format
-        if fmt is None:
-            raise ValueError(f"unknown image format: {path}")
-        data = base64.b64encode(path.read_bytes()).decode()
-        return cls(path, width, height, f"data:{Image.MIME[fmt]};base64,{data}")
-
-    def to_pixels(self, click: Click) -> tuple[float, float]:
-        return click.x / COORD_SCALE * self.width, click.y / COORD_SCALE * self.height
 
 
 @dataclass
@@ -110,7 +88,7 @@ def main() -> None:
     client = OpenAI(base_url=args.base_url, api_key="none")
     pred = locate(client, screenshot, args.element)
 
-    x_px, y_px = screenshot.to_pixels(pred.click)
+    x_px, y_px = screenshot.to_pixels(pred.click.x, pred.click.y)
     print(
         f"image {screenshot.width}x{screenshot.height}"
         f" | model ({pred.click.x}, {pred.click.y}) | pixels ({x_px:.0f}, {y_px:.0f})"

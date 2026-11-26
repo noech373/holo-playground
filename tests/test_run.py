@@ -7,8 +7,9 @@ import pytest
 from PIL import Image
 
 from holo_playground.agent.evaluate import Regex
-from holo_playground.agent.run import Task, run_trial
-from holo_playground.locate import Screenshot
+from holo_playground.agent.run import run_trial
+from holo_playground.agent.tasks import Task
+from holo_playground.screen import Screenshot
 
 TASK = Task(
     id="holo-license",
@@ -66,10 +67,10 @@ class ScriptedClient:
         step = next(self._steps)
         if isinstance(step, Exception):
             raise step
-        message = SimpleNamespace(content=json.dumps(step))
+        content = step if isinstance(step, str) else json.dumps(step)  # str: sent as is
+        message = SimpleNamespace(content=content)
         return SimpleNamespace(
             choices=[SimpleNamespace(message=message, finish_reason="stop")],
-            usage=None,
             model_extra={"timings": {"prompt_n": 600, "cache_n": 1500, "prompt_ms": 50_000.0,
                                      "predicted_n": 120, "predicted_ms": 33_000.0}},
         )
@@ -113,3 +114,11 @@ def test_a_crash_still_leaves_the_steps_and_an_unjudged_end_line(tmp_path):
     assert [line["type"] for line in lines] == ["step", "end"]
     assert lines[-1]["stop_reason"] == "error" and lines[-1]["success"] is None
     assert "llama-server died" in lines[-1]["error"]
+
+
+def test_an_output_that_is_not_a_step_is_an_agent_failure_not_a_crash(tmp_path):
+    # An endpoint that ignores response_format can answer anything: a format failure.
+    result, lines = trial(tmp_path, [CLICK, 'Sure! I will click on the "Models" link.'])
+
+    assert (result.stop_reason, result.n_steps) == ("invalid_step", 2)
+    assert lines[-1]["stop_reason"] == "invalid_step" and lines[-1]["success"] is False

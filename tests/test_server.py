@@ -8,8 +8,8 @@ from holo_playground import server
 
 
 def test_refuses_to_start_when_the_port_is_taken(monkeypatch, tmp_path):
-    # Regression: a second start in a notebook returned the new, already-dead process while the
-    # first server kept answering /health; stop_server() then stopped nothing.
+    # Otherwise the new server dies on bind, the old one answers /health, and the caller gets
+    # a dead process: stop_server() would then stop nothing.
     monkeypatch.setattr(server, "server_up", lambda port: True)
 
     def no_spawn(*args, **kwargs):

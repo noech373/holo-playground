@@ -1,12 +1,13 @@
 """Start and stop a local llama-server for a Holo model."""
 
 import argparse
-import json
 import subprocess
 import time
 import urllib.request
 from datetime import datetime
 from pathlib import Path
+
+from openai import OpenAI
 
 LLAMA_SERVER = Path.home() / "llama.cpp/build/bin/llama-server"
 MODELS_DIR = Path.home() / "models"
@@ -85,8 +86,7 @@ def start_server(
 def stop_server(proc: subprocess.Popen) -> None:
     """SIGTERM, then SIGKILL if llama-server hangs in its shutdown or a Ctrl-C cuts the wait.
 
-    Without the KeyboardInterrupt case, a second Ctrl-C skipped kill() and left an orphan
-    llama-server holding 2.8 GB of RAM, unseen, during later measurements (2026-11-23).
+    A second Ctrl-C must not skip kill(): an orphan server would hold GBs of RAM unseen.
     """
     proc.terminate()
     try:
@@ -96,7 +96,7 @@ def stop_server(proc: subprocess.Popen) -> None:
         proc.wait()
 
 
-def warm_up(port: int) -> float:
+def warm_up(client: OpenAI, model: str) -> float:
     """Send a tiny text-only request and return its duration in seconds.
 
     llama-server mmaps the weights: they are read from disk on first use, and the kernel may
@@ -104,15 +104,10 @@ def warm_up(port: int) -> float:
     pages the whole LLM in. Text-only: it shares no prefix with a real request, so it leaves
     nothing useful in the KV cache. (It does not touch the vision encoder, which is small.)
     """
-    body = json.dumps({"messages": [{"role": "user", "content": "hi"}], "max_tokens": 1}).encode()
-    request = urllib.request.Request(
-        f"http://localhost:{port}/v1/chat/completions",
-        data=body,
-        headers={"Content-Type": "application/json"}
-    )
     start = time.perf_counter()
-    with urllib.request.urlopen(request, timeout=STARTUP_TIMEOUT_S) as r:
-        r.read()
+    client.with_options(timeout=STARTUP_TIMEOUT_S).chat.completions.create(
+        model=model, max_tokens=1, messages=[{"role": "user", "content": "hi"}]
+    )
     return time.perf_counter() - start
 
 
@@ -134,7 +129,8 @@ def main() -> None:
     # KV cache on by default: the agent appends messages step after step and re-uses it.
     proc = start_server(args.model, args.budget, args.port, log, cache_prompt=not args.no_cache)
     try:
-        print(f"warm-up: {warm_up(args.port):.1f} s", flush=True)
+        client = OpenAI(base_url=f"http://localhost:{args.port}/v1", api_key="none")
+        print(f"warm-up: {warm_up(client, f'holo-3.1-{args.model}'):.1f} s", flush=True)
         print(f"ready: http://localhost:{args.port}/v1  model alias holo-3.1-{args.model}  (Ctrl-C to stop)",
                 flush=True)
         proc.wait()

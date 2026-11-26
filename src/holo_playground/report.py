@@ -63,7 +63,8 @@ def budget_label(budget: str) -> str:
 
 def markdown_table(stats: dict, models: list[str], budgets: list[str], n_image: dict[str, int]) -> str:
     lines = [
-        "| `--image-max-tokens` | image tokens | model | hits | median dist. to center | prefill | gen tok/s | latency |",
+        "| `--image-max-tokens` | image tokens | model | hits | median dist. to center "
+        "| prefill | gen tok/s | latency |",
         "|---|---|---|---|---|---|---|---|",
     ]
     for budget in reversed(budgets):
@@ -71,7 +72,8 @@ def markdown_table(stats: dict, models: list[str], budgets: list[str], n_image: 
             s = stats[(model, budget)]
             lines.append(
                 f"| {budget_label(budget)} | {n_image[budget]} | {model.upper()} | {s['hits']}/{s['n']}"
-                f" | {s['median_dist']:.1f} px | {s['prefill_s']:.0f} s | {s['gen_tok_s']:.1f} | {s['total_s']:.0f} s |"
+                f" | {s['median_dist']:.1f} px | {s['prefill_s']:.0f} s | {s['gen_tok_s']:.1f}"
+                f" | {s['total_s']:.0f} s |"
             )
     return "\n".join(lines)
 
@@ -95,7 +97,7 @@ def plot(stats: dict, models: list[str], budgets: list[str], n_image: dict[str, 
         color = COLORS.get(model, INK)
         series = [stats[(model, b)] for b in budgets]
         offset = (i - (len(models) - 1) / 2) * 0.12  # keep the two models' dots apart
-        for x, s in zip(xs, series):  # individual targets, faint
+        for x, s in zip(xs, series, strict=True):  # individual targets, faint
             ax_acc.scatter([x + offset] * len(s["dists"]), s["dists"], s=14, color=color, alpha=0.35,
                             linewidths=0)
         ax_acc.plot(xs, [s["median_dist"] for s in series], color=color, linewidth=2, marker="o",

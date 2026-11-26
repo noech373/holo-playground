@@ -1,5 +1,7 @@
 # holo-playground
 
+[![CI](https://github.com/noech373/holo-playground/actions/workflows/ci.yml/badge.svg)](https://github.com/noech373/holo-playground/actions/workflows/ci.yml)
+
 Two questions about [Holo 3.1](https://huggingface.co/collections/Hcompany/holo31), H Company's computer-use model, run locally on a laptop CPU with [llama.cpp](https://github.com/ggml-org/llama.cpp):
 
 1. **Grounding:** how much screen resolution does the model need to click the right element, and what does it cost?
@@ -77,6 +79,7 @@ task ──►  screenshot ──► Holo 3.1 9B ──► JSON step ──► P
 - [`actions.py`](src/holo_playground/agent/actions.py) defines the step format from [H Company's structured-output guide](https://hub.hcompany.ai/models-api/build-an-agent/structured-outputs) as Pydantic models. The server turns their JSON schema into a grammar, so every step parses.
 - [`memory.py`](src/holo_playground/agent/memory.py) builds the conversation: the task, then each step and its result. Only the last 3 screenshots are kept (`keep_last=3`, as H recommends); older ones become `[screenshot evicted]`, while the model's notes stay.
 - [`policy.py`](src/holo_playground/agent/policy.py) asks the model for the next step; [`run.py`](src/holo_playground/agent/run.py) runs the loop, writes a [JSONL trace](#what-every-trial-records) and checks the answer ([`evaluate.py`](src/holo_playground/agent/evaluate.py)).
+- Tasks are data: [`tasks/hf.json`](tasks/hf.json) gives each one a start URL, an instruction, the allowed domains and an answer check. [`tasks.py`](src/holo_playground/agent/tasks.py) validates the file before the first trial, so a typo fails in a second, not after a night of runs.
 - The model server is a separate process. The agent only knows an OpenAI-compatible URL, so switching to H's hosted API is a command-line flag, not a code change.
 
 ### First task: find a model's license
@@ -108,9 +111,9 @@ Trial of 2026-11-23 16:12 ([trace](results/agent/20261123-161259-holo-license/tr
 
 ### What every trial records
 
-`runs/<stamp>/<task>/trace.jsonl` gets one line per step, written as soon as the step ends, so a crash or Ctrl-C keeps everything up to that point. Each line has the thought, note and action, the click in pixels, the URL before and after, tokens computed and reused, prefill and generation times, and the screenshot file. A final line holds the answer and two separate verdicts:
+`runs/<stamp>/<task>/trial-<n>/trace.jsonl` gets one line per step, written as soon as the step ends, so a crash or Ctrl-C keeps everything up to that point. Each line has the thought, note and action, the click in pixels, the URL before and after, tokens computed and reused, prefill and generation times, and the screenshot file. A final line holds the answer and two separate verdicts:
 
-- `success`: the answer matches the task's check (a regular expression on the lowercased answer, so "Apache 2.0" and "The license is apache-2.0" both pass). Running out of steps counts as a failure (`false`). Only an infrastructure crash gives `null`, so that it is neither counted as an agent failure nor silently dropped.
+- `success`: the answer matches the task's check (a regular expression on the lowercased answer, so "Apache 2.0" and "The license is apache-2.0" both pass). Running out of steps, or an output that does not parse as a step, counts as a failure (`false`). Only an infrastructure crash gives `null`, so that it is neither counted as an agent failure nor silently dropped.
 - `reached_page`: whether the agent actually opened the page. A correct answer without it would be a guess, or something the model already knew.
 
 ### Caveats
@@ -122,7 +125,7 @@ Trial of 2026-11-23 16:12 ([trace](results/agent/20261123-161259-holo-license/tr
 
 ### Next steps
 
-- A task file and `--trials`, then a campaign of 5 tasks × 3 trials for a first success rate and a failure classification (wrong click vs. wrong plan, from the click positions and the thoughts).
+- A campaign of 5 tasks × 3 trials for a first success rate and a failure classification (wrong click vs. wrong plan, from the click positions and the thoughts).
 - Batched screenshot eviction, measured against `keep_last=3`.
 - The same tasks through H's hosted API (`--base-url`), to separate the model's ability from this laptop's latency.
 - Tracing in [Langfuse](https://langfuse.com) on top of the JSONL trace.
@@ -171,9 +174,11 @@ uv run holo-report results/*/results.csv --screenshot screenshots/hf_home.png
 
 ```bash
 uv run holo-serve --model 9b --budget 512   # llama-server with the KV cache on, until Ctrl-C
-uv run holo-agent                           # one trial; prints each step, writes runs/<stamp>/<task>/
-uv run holo-agent-report runs/<stamp>/<task>/trace.jsonl   # step table + docs/agent-*.png
+uv run holo-agent --trials 3                # every task in tasks/hf.json, 3 trials each
+uv run holo-agent-report runs/<stamp>/<task>/trial-1/trace.jsonl   # step table + docs/agent-*.png
 ```
+
+Trials are interleaved across tasks (A, B, C, then A, B, C again), so a slow drift over a long campaign, such as CPU throttling, spreads over every task. `--task-id` runs a single task. Each run also saves the server settings (`server.json`), its own settings (`run.json`) and the exact tasks it ran (`tasks.json`).
 
 `holo-agent --base-url … --model … --api-key …` points it at any other OpenAI-compatible endpoint.
 

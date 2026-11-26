@@ -8,7 +8,7 @@ import pytest
 from holo_playground.agent.actions import Step
 from holo_playground.agent.memory import EVICTED, Memory
 from holo_playground.agent.policy import PolicyOutput
-from holo_playground.locate import Screenshot
+from holo_playground.screen import Screenshot
 
 TASK = "Open the Models page of Hugging Face."
 
@@ -21,7 +21,7 @@ def output(i: int) -> PolicyOutput:
     # Spaces after ':' and ',' as the model writes them: Memory must re-send this text verbatim.
     raw = json.dumps({"note": None, "thought": f"step {i}",
                       "tool_call": {"tool_name": "scroll", "direction": "down"}})
-    return PolicyOutput(Step.model_validate_json(raw), raw, "stop", {}, {}, 0.0)
+    return PolicyOutput(Step.model_validate_json(raw), raw, {}, 0.0)
 
 
 def run(n_steps: int, keep_last: int = 3) -> Memory:

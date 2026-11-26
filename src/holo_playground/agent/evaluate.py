@@ -2,23 +2,23 @@
 
 import re
 
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, ConfigDict, field_validator
 
 
 class Contains(BaseModel):
     """The normalized answer contains this text (normalized the same way)."""
+    model_config = ConfigDict(extra="forbid")
     contains: str
 
 
 class Regex(BaseModel):
     """re.search on the normalized (lowercase) answer: write the pattern in lowercase."""
+    model_config = ConfigDict(extra="forbid")
     regex: str
 
     @field_validator("regex")
     @classmethod
     def _compiles(cls, pattern: str) -> str:
-        # A broken pattern fails when the task is loaded, not after a trial. re.error is not a
-        # ValueError: pydantic only turns ValueError/AssertionError into a ValidationError.
         try:
             re.compile(pattern)
         except re.error as e:
