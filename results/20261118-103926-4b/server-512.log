@@ -1,13 +1,13 @@
 0.00.002.426 I srv  llama_server: initializing ...
 0.00.003.384 I cmn  common_param: common_params_print_info: verbosity = 3 (adjust with the `-lv N` CLI arg)
 0.00.004.035 W srv  server_setup: security: no API key is set and CORS allows all origins (see https://github.com/ggml-org/llama.cpp/pull/25655)
-0.00.006.510 I srv    load_model: loading model '/home/noech/models/holo-3.1-4b/Holo-3.1-4B.Q4_K_M.gguf'
+0.00.006.510 I srv    load_model: loading model '~/models/holo-3.1-4b/Holo-3.1-4B.Q4_K_M.gguf'
 0.03.456.454 I cmn          init: llama threadpool init, n_threads = 4
 0.03.706.951 W load_hparams: Qwen-VL models require at minimum 1024 image tokens to function correctly on grounding tasks
 0.03.706.961 W load_hparams: if you encounter problems with accuracy, try adding --image-min-tokens 1024
 0.03.706.961 W load_hparams: more info: https://github.com/ggml-org/llama.cpp/issues/16842
 
-0.04.208.798 I srv    load_model: loaded multimodal model, '/home/noech/models/holo-3.1-4b/Holo-3.1-4B.mmproj-Q8_0.gguf'
+0.04.208.798 I srv    load_model: loaded multimodal model, '~/models/holo-3.1-4b/Holo-3.1-4B.mmproj-Q8_0.gguf'
 0.04.442.379 I srv    load_model: initializing, n_slots = 1, n_ctx_slot = 8192, kv_unified = 'false'
 0.04.448.131 I srv  server_run_i: model loaded
 0.04.448.171 I srv  server_on_li: listening on http://127.0.0.1:8080
