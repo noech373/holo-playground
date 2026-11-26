@@ -10,9 +10,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v10.4.0  # no floating major tag for this action
+      - uses: astral-sh/setup-uv@v10.4.0
       - run: uv sync --locked
       - run: uv run ruff check src tests
-      # The browser tests drive a real headless Chromium on a local page: no model, no internet.
       - run: uv run playwright install --with-deps chromium
       - run: uv run pytest -q
