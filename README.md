@@ -1,5 +1,7 @@
 # holo-playground
 
+[![CI](https://github.com/noech373/holo-playground/actions/workflows/ci.yml/badge.svg)](https://github.com/noech373/holo-playground/actions/workflows/ci.yml)
+
 Two questions about [Holo 3.1](https://huggingface.co/collections/Hcompany/holo31), H Company's computer-use model, run locally on a laptop CPU with [llama.cpp](https://github.com/ggml-org/llama.cpp):
 
 1. **Grounding:** how much screen resolution does the model need to click the right element, and what does it cost?
