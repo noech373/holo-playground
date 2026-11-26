@@ -15,15 +15,18 @@ from holo_playground.locate import COORD_SCALE, Screenshot
 SETTLE_S = 0.5                  # pause before and after waiting for the network
 NETWORK_IDLE_TIMEOUT_MS = 5000  # some pages never reach network idle: don't wait forever
 SCROLL_FRACTION = 0.75          # one scroll = 3/4 of the viewport height
-# Change detection counts pixels that really changed, at full resolution. A mean over the whole
-# screenshot would hide a typed word (a few hundred pixels out of a million).
 PIXEL_DIFF = 32                 # a pixel "changed" if its gray level moved by more than this (0-255)
-MIN_CHANGED_PIXELS = 64         # fewer changed pixels = unchanged (a blinking caret is ~30 px)
-# True if the focused element accepts text.
+MIN_CHANGED_PIXELS = 64
 FOCUS_IS_EDITABLE_JS = """() => {
     const e = document.activeElement;
     return !!e && (e.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(e.tagName));
 }"""
+
+
+def domain_allowed(url: str, domains: set[str] | frozenset[str]) -> bool:
+    """True if the url's host is an allowed domain or one of its subdomains."""
+    host = urlparse(url).hostname or ""
+    return any(host == d or host.endswith("." + d) for d in domains)
 
 
 class Browser:
@@ -33,7 +36,7 @@ class Browser:
     CSS pixels and mouse coordinates are the same thing.
     """
 
-    def __init__(self, allowed_domains: set[str], width: int = 1280, height: int = 800,
+    def __init__(self, allowed_domains: set[str] | frozenset[str], width: int = 1280, height: int = 800,
                 headless: bool = True) -> None:
         self.allowed_domains = allowed_domains
         self.width, self.height = width, height
@@ -143,10 +146,7 @@ class Browser:
         return True
 
     def _allowed(self, url: str) -> bool:
-        """True if the url's host is an allowed domain or one of its subdomains."""
-        host = urlparse(url).hostname or ""
-        # endswith("." + d), not endswith(d): "evilhuggingface.co" must not pass for "huggingface.co"
-        return any(host == d or host.endswith("." + d) for d in self.allowed_domains)
+        return domain_allowed(url, self.allowed_domains)
 
     def _short_url(self, url: str) -> str:
         """Path and query only: off-domain urls are blocked before we get here."""

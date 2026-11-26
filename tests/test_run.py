@@ -7,7 +7,8 @@ import pytest
 from PIL import Image
 
 from holo_playground.agent.evaluate import Regex
-from holo_playground.agent.run import Task, run_trial
+from holo_playground.agent.run import run_trial
+from holo_playground.agent.tasks import Task
 from holo_playground.locate import Screenshot
 
 TASK = Task(
