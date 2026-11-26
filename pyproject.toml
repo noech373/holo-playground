@@ -3,6 +3,8 @@ name = "holo-playground"
 version = "0.1.0"
 description = "Holo 3.1 on a laptop CPU: GUI-grounding accuracy vs. image budget, and a web agent built from scratch"
 readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
 authors = [
     { name = "noech373" }
 ]
