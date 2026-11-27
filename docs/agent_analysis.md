@@ -12,7 +12,7 @@ task ──►  screenshot ──► Holo 3.1 9B ──► JSON step ──► P
 ```
 
 - [`browser.py`](../src/holo_playground/agent/browser.py) drives Chromium and reports what each action did ("url changed to …", "page unchanged"), with guardrails: allowed domains only, no typing without a focused field.
-- [`actions.py`](../src/holo_playground/agent/actions.py) defines the step format from [H Company's structured-output guide](https://hub.hcompany.ai/models-api/build-an-agent/structured-outputs) as Pydantic models. The server turns their JSON schema into a grammar, so every step parses.
+- [`actions.py`](../src/holo_playground/agent/actions.py) defines the step format from [H Company's structured-output guide](https://hub.hcompany.ai/models-api/build-an-agent/structured-outputs) as Pydantic models. The server turns their JSON schema into a grammar, so every complete step parses; a step cut by `max_tokens` is recorded as `truncated`.
 - [`memory.py`](../src/holo_playground/agent/memory.py) builds the conversation: the task, then each step and its result. Only the last 3 screenshots are kept (`keep_last=3`, as H recommends); older ones become `[screenshot evicted]`, while the model's notes stay.
 - [`policy.py`](../src/holo_playground/agent/policy.py) asks the model for the next step; [`run.py`](../src/holo_playground/agent/run.py) runs the loop, writes a [JSONL trace](#what-every-trial-records) and checks the answer ([`evaluate.py`](../src/holo_playground/agent/evaluate.py)).
 - Tasks are data: [`tasks/hf.json`](../tasks/hf.json) gives each one a start URL, an instruction, the allowed domains and an answer check. [`tasks.py`](../src/holo_playground/agent/tasks.py) validates the file before the first trial, so a typo fails in a second, not after a night of runs.
@@ -47,7 +47,7 @@ Trial of 2026-11-23 16:12 ([trace](../results/agent/20261123-161259-holo-license
 
 ## Same task on H's API
 
-Same agent, same system prompt, same task (temperature 0.8, last 3 screenshots), with `--base-url` pointing to H's API and `holo3-1-35b-a3b`, 3 trials on 2026-11-27 ([traces](../results/agent/20261127-091732-holo-license-hosted/)). All three answered with the right license and opened the model page (`success: true`, `reached_page: true`).
+Same agent, same system prompt, same task (temperature 0.8, last 3 screenshots), with `--base-url` pointing to H's API and `holo3-1-35b-a3b`, 3 trials on 2026-11-27 ([traces](../results/agent/20261127-091732-holo-license-hosted/)), with the default cap of 300 tokens per step. All three answered with the right license and opened the model page (`success: true`, `reached_page: true`).
 
 | trial | steps | path | end to end | waiting for the model |
 |---|---|---|---|---|
@@ -59,8 +59,13 @@ Same agent, same system prompt, same task (temperature 0.8, last 3 screenshots),
 - **This is not a model comparison:** a 35B-A3B on H's hardware against a 9B on a laptop CPU, on a handful of trials. The image budget also differs: capped at 512 tokens locally, left to the API's default here.
 - **The path varies between trials.** Trial 3 never used the search bar, and still got there.
 - **The browser becomes a large share of the time.** 8–13 s per trial are spent outside model calls (browser launch, page loads, fixed pauses between actions): about half of trials 1 and 2. With fast inference, the environment is worth optimizing too.
-- **One request took 25 s** (trial 3, step 3), against 2–4 s for the others. It was the 11th request in about 40 s, so most likely the free tier's limit of 10 requests per minute: the OpenAI client retries silently, and `wall_s` includes the wait. Traces now record those retries per step (`retries`), so the next hosted run will tell for sure.
-- **A false negative from the evaluator.** The first hosted trial, on 2026-11-26 ([trace](../results/agent/20261126-174604-holo-license-hosted/trace.jsonl)), was scored a failure: the agent answered "Apache License 2.0" and the pattern required "2.0" right after "apache". The agent was right, the check was wrong. The pattern was fixed before the three trials above, and that answer is now a test case. The old trace keeps its original verdict.
+- **One request took 25 s** (trial 3, step 3), against 2–4 s for the others. It was the 11th request in about 40 s, so most likely the free tier's limit of 10 requests per minute: the OpenAI client retries silently, and `wall_s` includes the wait. The two later runs below record the client's retries per step, and confirm it: their only slow steps (15.5 and 26.5 s) are the two with `retries: 1`.
+- **A false negative from the evaluator.** The first hosted trial, on 2026-11-26 ([trace](../results/agent/20261126-174604-holo-license-hosted/trial-1/trace.jsonl)), was scored a failure: the agent answered "Apache License 2.0" and the pattern required "2.0" right after "apache". The agent was right, the check was wrong. The pattern was fixed before the three trials above (the run's [`tasks.json`](../results/agent/20261126-174604-holo-license-hosted/tasks.json) keeps the old one), and that answer is now a test case. The old trace keeps its original verdict.
+
+Two more runs of 3 trials followed the same morning, with the retries recorded:
+
+- **The 300-token cap can cut a step** ([run](../results/agent/20261127-104559-holo-license-hosted/)). Trial 1 stopped at its second step, `truncated` and scored a failure: the hosted model writes longer thoughts and notes than the local 9B (85 words of thought at the step before) despite the "one short sentence" rule, and the cap was sized for the 9B. Trials 2 and 3 succeeded. This run predates `raw_output`, so the cut text was not kept.
+- **With `--max-tokens 600`, 3/3** ([run](../results/agent/20261127-105349-holo-license-hosted/)), 4 steps each, 15–40 s. This is the command the README gives.
 
 ## What every trial records
 
@@ -71,7 +76,7 @@ Same agent, same system prompt, same task (temperature 0.8, last 3 screenshots),
 
 ## Caveats
 
-- **One task, a handful of trials** (two locally, three on H's API, plus the mis-scored one). This shows the loop works and where the time goes, not a success rate.
+- **One task, a handful of trials** (two locally, nine on H's API over three runs, plus the mis-scored one). This shows the loop works and where the time goes, not a success rate.
 - **Only the second local trial has a trace**, since the format was added after the first. That trace predates the automatic verdict (`success: null`, no `reached_page`); re-judged with the current check, it passes and reaches the page.
 - **The first-step prefill varies** from 92 to 107 s with the same 1,511 tokens, depending on free RAM. Single-run timings are indicative.
 - **A string check cannot read negation:** "MIT, not apache-2.0" would pass. A test documents this limit; an LLM judge would be the next step.

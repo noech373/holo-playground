@@ -19,6 +19,7 @@ from holo_playground.agent.memory import Memory
 from holo_playground.agent.policy import (
     MAX_TOKENS,
     InvalidStep,
+    PolicyOutput,
     TruncatedStep,
     build_system_prompt,
     policy,
@@ -41,7 +42,7 @@ class TrialResult:
     """
 
     answer: str | None
-    n_steps: int
+    n_steps: int  # steps completed and traced: a cut or unparsable output is not a step
     stop_reason: str  # "answer" | "max_steps" | "truncated" | "invalid_step"
     visited: list[str] = field(default_factory=list)
     success: bool | None = None  # set by run_trial
@@ -129,20 +130,14 @@ def _loop(
                 )
             except TruncatedStep as e:
                 print(f"step {i}: truncated: {e}", flush=True)
-                return TrialResult(None, i, "truncated", visited, raw_output=e.raw)
+                return TrialResult(None, i - 1, "truncated", visited, raw_output=e.raw)
             except InvalidStep as e:
                 print(f"step {i}: invalid step: {e}", flush=True)
-                return TrialResult(None, i, "invalid_step", visited, raw_output=e.raw)
+                return TrialResult(None, i - 1, "invalid_step", visited, raw_output=e.raw)
 
             tool_call = output.step.tool_call
             t = output.timings
-            print(
-                f"step {i}: {tool_call.tool_name} | prompt_n {t.get('prompt_n')} "
-                f"cache_n {t.get('cache_n')} | prefill {t.get('prompt_ms', 0) / 1000:.0f} s, "
-                f"gen {t.get('predicted_n')} tok {t.get('predicted_ms', 0) / 1000:.0f} s | "
-                f"wall {output.wall_s:.0f} s",
-                flush=True,
-            )
+            print(f"step {i}: {tool_call.tool_name} | {_cost(output)}", flush=True)
             print(f"  thought: {output.step.thought}", flush=True)
             if output.step.note:
                 print(f"  note: {output.step.note}", flush=True)
@@ -181,6 +176,20 @@ def _loop(
                 return TrialResult(tool_call.content, i, "answer", visited)
 
         return TrialResult(None, max_steps, "max_steps", visited)
+
+
+def _cost(output: PolicyOutput) -> str:
+    """One-line cost of a model call: llama-server's token timings when there are some."""
+    t = output.timings
+    cost = f"{output.wall_s:.1f} s"
+    if t:
+        cost = (
+            f"prompt_n {t['prompt_n']} cache_n {t['cache_n']} | prefill {t['prompt_ms'] / 1000:.0f} s, "
+            f"gen {t['predicted_n']} tok {t['predicted_ms'] / 1000:.0f} s | wall {output.wall_s:.0f} s"
+        )
+    if output.retries:
+        cost += f" ({output.retries} retries)"
+    return cost
 
 
 def save_server_props(base_url: str, path: Path) -> None:

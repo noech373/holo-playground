@@ -8,7 +8,8 @@ import pytest
 from PIL import Image
 
 from holo_playground.agent.evaluate import Regex
-from holo_playground.agent.run import run_trial
+from holo_playground.agent.policy import PolicyOutput
+from holo_playground.agent.run import _cost, run_trial
 from holo_playground.agent.tasks import Task
 from holo_playground.screen import Screenshot
 
@@ -167,7 +168,8 @@ def test_an_output_that_is_not_a_step_is_an_agent_failure_not_a_crash(tmp_path):
     # An endpoint that ignores response_format can answer anything: a format failure.
     result, lines = trial(tmp_path, [CLICK, 'Sure! I will click on the "Models" link.'])
 
-    assert (result.stop_reason, result.n_steps) == ("invalid_step", 2)
+    assert (result.stop_reason, result.n_steps) == ("invalid_step", 1)
+    assert lines[-1]["n_steps"] == 1
     assert lines[-1]["stop_reason"] == "invalid_step" and lines[-1]["success"] is False
     assert lines[-1]["raw_output"] == 'Sure! I will click on the "Models" link.'
 
@@ -178,6 +180,31 @@ def test_a_truncated_step_keeps_the_cut_output_in_the_end_line(tmp_path):
 
     assert (result.stop_reason, result.success) == ("truncated", False)
     assert lines[-1]["raw_output"] == cut
+    assert result.n_steps == lines[-1]["n_steps"] == 0  # the terminal and the trace agree
+
+
+@pytest.mark.parametrize(
+    ("timings", "retries", "expected"),
+    [
+        ({}, 0, "2.3 s"),
+        ({}, 1, "2.3 s (1 retries)"),
+        (
+            {
+                "prompt_n": 600,
+                "cache_n": 1500,
+                "prompt_ms": 50_000.0,
+                "predicted_n": 120,
+                "predicted_ms": 33_000.0,
+            },
+            0,
+            "prompt_n 600 cache_n 1500 | prefill 50 s, gen 120 tok 33 s | wall 2 s",
+        ),
+    ],
+    ids=["hosted", "hosted-retried", "llama-server"],
+)
+def test_the_step_line_shows_timings_only_when_the_server_sends_them(timings, retries, expected):
+    output = PolicyOutput(step=None, raw="", timings=timings, wall_s=2.3, retries=retries)  # type: ignore[arg-type]
+    assert _cost(output) == expected
 
 
 def test_an_answer_leaves_no_raw_output(tmp_path):

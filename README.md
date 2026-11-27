@@ -17,7 +17,7 @@ The agent is written from scratch (Playwright, Pydantic, no agent framework) and
 |---|---|---|
 | grounding, 4 targets | 9B, 512 image tokens, laptop CPU | 4/4 hits, 50 s per click (187 s at full resolution) |
 | agent, 1 task | 9B, 512 image tokens, laptop CPU | 2/2 trials (1 traced), 4 steps, ~8.7 min each |
-| agent, same task | `holo3-1-35b-a3b`, H's API | 3/3 trials, 4–6 steps, 16–47 s each |
+| agent, same task | `holo3-1-35b-a3b`, H's API | 8/9 trials over 3 runs, 4–6 steps, 15–47 s each |
 
 - **Below 512 image tokens, grounding accuracy drops sharply:** at 128 tokens, the 9B hits 1 target out of 4 and the 4B none.
 - **On a CPU, memory management drives the agent's cost.** A step takes 80–100 s when the KV cache is re-used, and ~190–205 s when dropping an old screenshot breaks it.
@@ -63,15 +63,15 @@ The task: start on `huggingface.co/Hcompany`, *"Open the page of the Holo 3.1 9B
 | | steps | end to end | waiting for the model |
 |---|---|---|---|
 | local 9B, trial of 2026-11-23 16:12 | 4 | 520 s | 508 s |
-| H's API, trial 1 | 4 | 23 s | 10 s |
-| H's API, trial 2 | 4 | 16 s | 7 s |
-| H's API, trial 3 | 6 | 47 s | 36 s |
+| H's API, first run, trial 1 | 4 | 23 s | 10 s |
+| H's API, first run, trial 2 | 4 | 16 s | 7 s |
+| H's API, first run, trial 3 | 6 | 47 s | 36 s |
 
 - **The KV cache works across steps, images included**, until `keep_last=3` drops a screenshot: from step 4, most of the prompt is recomputed.
-- **With fast inference, the browser matters:** 8–13 s per hosted trial are spent outside model calls.
+- **With fast inference, the browser matters:** 7–13 s per hosted trial are spent outside model calls.
 - **The path can vary:** one hosted trial scrolled to the model instead of searching for it.
 
-**Limits:** one task and a handful of trials on a live website. This is not a model comparison: model, hardware and image budget all differ. The answer is checked with a regular expression, which cannot read negation. [Full analysis](docs/agent_analysis.md).
+**Limits:** one task and a handful of trials on a live website. The one hosted failure out of 9 had its second step cut by the 300-token cap, hence `--max-tokens 600` below. This is not a model comparison: model, hardware and image budget all differ. The answer is checked with a regular expression, which cannot read negation. [Full analysis](docs/agent_analysis.md).
 
 ## Usage
 
