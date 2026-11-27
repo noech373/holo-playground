@@ -1,0 +1,10 @@
+{
+  "base_url": "https://api.hcompany.ai/v1/",
+  "model": "holo3-1-35b-a3b",
+  "trials": 3,
+  "keep_last": 3,
+  "temperature": 0.8,
+  "max_tokens": 600,
+  "no_warmup": true,
+  "tasks_file": "tasks/hf.json"
+}

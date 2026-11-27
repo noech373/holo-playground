@@ -11,9 +11,17 @@ from PIL import Image
 from holo_playground import locate
 
 COMPLETION = {
-    "id": "x", "object": "chat.completion", "created": 0, "model": "stub",
-    "choices": [{"index": 0, "finish_reason": "stop",
-                 "message": {"role": "assistant", "content": '{"x": 500, "y": 250}'}}],
+    "id": "x",
+    "object": "chat.completion",
+    "created": 0,
+    "model": "stub",
+    "choices": [
+        {
+            "index": 0,
+            "finish_reason": "stop",
+            "message": {"role": "assistant", "content": '{"x": 500, "y": 250}'},
+        }
+    ],
 }
 
 
@@ -74,4 +82,4 @@ def test_default_key_comes_from_the_environment(api, monkeypatch, tmp_path, env,
     run(monkeypatch, tmp_path, "--base-url", url)
     [(authorization, body)] = requests
     assert authorization == expected
-    assert body["model"] == "holo"
+    assert body["model"] == "holo-3.1-9b"

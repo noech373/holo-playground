@@ -1,13 +1,15 @@
 """run_trial end to end, without Chromium or a model: a scripted policy and a fake browser."""
 
 import json
+from dataclasses import dataclass
 from types import SimpleNamespace
 
 import pytest
 from PIL import Image
 
 from holo_playground.agent.evaluate import Regex
-from holo_playground.agent.run import run_trial
+from holo_playground.agent.policy import PolicyOutput
+from holo_playground.agent.run import _cost, run_trial
 from holo_playground.agent.tasks import Task
 from holo_playground.screen import Screenshot
 
@@ -19,12 +21,21 @@ TASK = Task(
     check=Regex(regex=r"\bapache[- ]?2\.0\b"),
     must_visit="/Hcompany/Holo-3.1-9B",
 )
-CLICK = {"note": None, "thought": "open the model",
-         "tool_call": {"tool_name": "click", "element": "Holo-3.1-9B", "x": 500, "y": 250}}
-SCROLL = {"note": None, "thought": "look further down",
-          "tool_call": {"tool_name": "scroll", "direction": "down"}}
-ANSWER = {"note": "License: apache-2.0", "thought": "done",
-          "tool_call": {"tool_name": "answer", "content": "apache-2.0"}}
+CLICK = {
+    "note": None,
+    "thought": "open the model",
+    "tool_call": {"tool_name": "click", "element": "Holo-3.1-9B", "x": 500, "y": 250},
+}
+SCROLL = {
+    "note": None,
+    "thought": "look further down",
+    "tool_call": {"tool_name": "scroll", "direction": "down"},
+}
+ANSWER = {
+    "note": "License: apache-2.0",
+    "thought": "done",
+    "tool_call": {"tool_name": "answer", "content": "apache-2.0"},
+}
 
 
 class FakeBrowser:
@@ -56,30 +67,59 @@ class FakeBrowser:
         return x / 1000 * 1280, y / 1000 * 800
 
 
-class ScriptedClient:
-    """Answers each chat.completions.create call with the next step of the script."""
+@dataclass
+class Truncated:
+    """A scripted answer cut by max_tokens (finish_reason "length")."""
 
-    def __init__(self, steps):
+    text: str
+
+
+class ScriptedClient:
+    """Answers each chat.completions.with_raw_response.create call with the next step of the script."""
+
+    def __init__(self, steps, retries=0):
         self._steps = iter(steps)
-        self.chat = SimpleNamespace(completions=SimpleNamespace(create=self._create))
+        self._retries = retries
+        self.max_tokens = []  # max_tokens of each request
+        raw = SimpleNamespace(create=self._create)
+        self.chat = SimpleNamespace(completions=SimpleNamespace(with_raw_response=raw))
 
     def _create(self, **kwargs):
+        self.max_tokens.append(kwargs["max_tokens"])
         step = next(self._steps)
         if isinstance(step, Exception):
             raise step
+        finish_reason = "stop"
+        if isinstance(step, Truncated):
+            step, finish_reason = step.text, "length"
         content = step if isinstance(step, str) else json.dumps(step)  # str: sent as is
         message = SimpleNamespace(content=content)
-        return SimpleNamespace(
-            choices=[SimpleNamespace(message=message, finish_reason="stop")],
-            model_extra={"timings": {"prompt_n": 600, "cache_n": 1500, "prompt_ms": 50_000.0,
-                                     "predicted_n": 120, "predicted_ms": 33_000.0}},
+        response = SimpleNamespace(
+            choices=[SimpleNamespace(message=message, finish_reason=finish_reason)],
+            model_extra={
+                "timings": {
+                    "prompt_n": 600,
+                    "cache_n": 1500,
+                    "prompt_ms": 50_000.0,
+                    "predicted_n": 120,
+                    "predicted_ms": 33_000.0,
+                }
+            },
         )
+        return SimpleNamespace(parse=lambda: response, retries_taken=self._retries)
 
 
-def trial(tmp_path, steps, **kwargs):
-    client = ScriptedClient(steps)
-    result = run_trial(client, "holo", TASK, tmp_path, run_id="r1",  # type: ignore[arg-type]
-                       make_browser=FakeBrowser, **kwargs)
+def trial(tmp_path, steps, retries=0, client=None, **kwargs):
+    client = client or ScriptedClient(steps, retries)
+    result = run_trial(
+        client,  # type: ignore[arg-type]
+        "holo",
+        TASK,
+        tmp_path,
+        run_id="r1",
+        make_browser=FakeBrowser,
+        **kwargs,
+    )
     lines = [json.loads(line) for line in (tmp_path / "trace.jsonl").read_text().splitlines()]
     return result, lines
 
@@ -96,6 +136,14 @@ def test_success_writes_one_line_per_step_then_a_judged_end_line(tmp_path):
     assert answer["result"] is None and answer["x_px"] is None
     assert end["success"] is True and end["reached_page"] is True and end["n_steps"] == 2
     assert (tmp_path / "step-02.png").exists()
+    assert click["retries"] == 0
+
+
+def test_retries_of_the_client_are_traced(tmp_path):
+    # A rate-limited request is re-sent by the OpenAI client: its wall_s includes the wait.
+    _, lines = trial(tmp_path, [ANSWER], retries=2)
+
+    assert lines[0]["retries"] == 2
 
 
 def test_running_out_of_steps_is_a_failure_not_a_null(tmp_path):
@@ -120,5 +168,53 @@ def test_an_output_that_is_not_a_step_is_an_agent_failure_not_a_crash(tmp_path):
     # An endpoint that ignores response_format can answer anything: a format failure.
     result, lines = trial(tmp_path, [CLICK, 'Sure! I will click on the "Models" link.'])
 
-    assert (result.stop_reason, result.n_steps) == ("invalid_step", 2)
+    assert (result.stop_reason, result.n_steps) == ("invalid_step", 1)
+    assert lines[-1]["n_steps"] == 1
     assert lines[-1]["stop_reason"] == "invalid_step" and lines[-1]["success"] is False
+    assert lines[-1]["raw_output"] == 'Sure! I will click on the "Models" link.'
+
+
+def test_a_truncated_step_keeps_the_cut_output_in_the_end_line(tmp_path):
+    cut = '{"note": null, "thought": "The page shows the H company organization and'
+    result, lines = trial(tmp_path, [Truncated(cut)])
+
+    assert (result.stop_reason, result.success) == ("truncated", False)
+    assert lines[-1]["raw_output"] == cut
+    assert result.n_steps == lines[-1]["n_steps"] == 0  # the terminal and the trace agree
+
+
+@pytest.mark.parametrize(
+    ("timings", "retries", "expected"),
+    [
+        ({}, 0, "2.3 s"),
+        ({}, 1, "2.3 s (1 retries)"),
+        (
+            {
+                "prompt_n": 600,
+                "cache_n": 1500,
+                "prompt_ms": 50_000.0,
+                "predicted_n": 120,
+                "predicted_ms": 33_000.0,
+            },
+            0,
+            "prompt_n 600 cache_n 1500 | prefill 50 s, gen 120 tok 33 s | wall 2 s",
+        ),
+    ],
+    ids=["hosted", "hosted-retried", "llama-server"],
+)
+def test_the_step_line_shows_timings_only_when_the_server_sends_them(timings, retries, expected):
+    output = PolicyOutput(step=None, raw="", timings=timings, wall_s=2.3, retries=retries)  # type: ignore[arg-type]
+    assert _cost(output) == expected
+
+
+def test_an_answer_leaves_no_raw_output(tmp_path):
+    _, lines = trial(tmp_path, [ANSWER])
+
+    assert lines[-1]["raw_output"] is None
+
+
+def test_max_tokens_reaches_every_request(tmp_path):
+    client = ScriptedClient([CLICK, ANSWER])
+    trial(tmp_path, None, client=client, max_tokens=600)
+
+    assert client.max_tokens == [600, 600]

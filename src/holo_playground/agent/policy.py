@@ -1,4 +1,4 @@
-"""Policy: ask a Holo model, served by llama-server, for the agent's next step."""
+"""Policy: ask a Holo model, served by llama-server or a hosted API, for the agent's next step."""
 
 import json
 import time
@@ -11,25 +11,36 @@ from holo_playground.agent.actions import Step
 from holo_playground.server import NO_THINKING
 
 STEP_SCHEMA = Step.model_json_schema()
-# A step is 125-150 tokens with the short-thought rule: 300 leaves room
-# while capping one step at ~2 min of generation on this CPU.
+# The local 9B writes 125-150 tokens per step with the short-thought rule: 300 leaves room while
+# capping one step at ~2 min of generation on this CPU. H's hosted model writes longer thoughts
+# and notes: give it more (--max-tokens 600), generation is fast there.
 MAX_TOKENS = 300
 
 
-class TruncatedStep(Exception):
+class StepError(Exception):
+    """The model's output is not a usable step. `raw` keeps the text, for the trace."""
+
+    def __init__(self, message: str, raw: str) -> None:
+        super().__init__(message)
+        self.raw = raw
+
+
+class TruncatedStep(StepError):
     """The model hit max_tokens: the JSON is cut, the grammar cannot make it valid."""
 
 
-class InvalidStep(Exception):
+class InvalidStep(StepError):
     """The output does not parse as a Step: an endpoint that ignores response_format."""
 
 
 @dataclass
 class PolicyOutput:
     step: Step
-    raw: str            # exact generated text: goes back into the history as is (KV cache)
-    timings: dict       # llama-server: cache_n, prompt_n, prompt_ms, predicted_n, predicted_ms
+    raw: str  # exact generated text: goes back into the history as is (KV cache)
+    timings: dict  # llama-server: cache_n, prompt_n, prompt_ms, predicted_n, predicted_ms
     wall_s: float
+    retries: int = 0  # requests the OpenAI client re-sent (429, 5xx): wall_s includes their wait
+
 
 # Structure from H Company's structured-outputs guide: role, actions in prose, rules, then the
 # JSON schema in <output_format>. The model never sees `response_format`: llama-server turns it
@@ -86,7 +97,7 @@ def policy(
         a hosted API (e.g. H's) needs the real model name.
     """
     start = time.perf_counter()
-    response = client.chat.completions.create(
+    raw_response = client.chat.completions.with_raw_response.create(
         model=model,
         messages=messages,  # type: ignore[arg-type]
         temperature=temperature,
@@ -95,18 +106,20 @@ def policy(
         extra_body=NO_THINKING,
     )
     wall_s = time.perf_counter() - start
+    response = raw_response.parse()
 
     choice = response.choices[0]
     raw = choice.message.content or ""
     if choice.finish_reason == "length":
-        raise TruncatedStep(f"no complete step within {max_tokens} tokens: {raw[-80:]!r}")
+        raise TruncatedStep(f"no complete step within {max_tokens} tokens: {raw[-80:]!r}", raw)
     try:
         step = Step.model_validate_json(raw)
     except ValidationError as e:
-        raise InvalidStep(f"{e.error_count()} error(s) in {raw[:80]!r}") from e
+        raise InvalidStep(f"{e.error_count()} error(s) in {raw[:80]!r}", raw) from e
     return PolicyOutput(
         step=step,
         raw=raw,
         timings=(response.model_extra or {}).get("timings", {}),
         wall_s=wall_s,
+        retries=raw_response.retries_taken,
     )

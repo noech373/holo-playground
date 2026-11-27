@@ -2,6 +2,10 @@
 
 [![CI](https://github.com/noech373/holo-playground/actions/workflows/ci.yml/badge.svg)](https://github.com/noech373/holo-playground/actions/workflows/ci.yml)
 
+**TL;DR:** on a 4-core laptop CPU, Holo 3.1 9B clicks the right element 4/4 times at 512 image tokens, in 50 s instead of 187 s at full resolution. A web agent written from scratch completes the same task locally (~9 min) and on H's API (15–47 s), with every step traced.
+
+![The agent's four steps: click the search bar, type the model name, click the result, answer](docs/agent-trajectory.png)
+
 Experiments with [Holo 3.1](https://huggingface.co/collections/Hcompany/holo31), H Company's computer-use model, on a laptop CPU with [llama.cpp](https://github.com/ggml-org/llama.cpp). Two questions:
 
 1. **Grounding:** how much screen resolution does the model need to click the right element, and what does it cost?
@@ -16,10 +20,10 @@ The agent is written from scratch (Playwright, Pydantic, no agent framework) and
 | experiment | model and machine | result |
 |---|---|---|
 | grounding, 4 targets | 9B, 512 image tokens, laptop CPU | 4/4 hits, 50 s per click (187 s at full resolution) |
-| agent, 1 task | 9B, 512 image tokens, laptop CPU | 2/2 trials, 4 steps, ~8.7 min each |
-| agent, same task | `holo3-1-35b-a3b`, H's API | 3/3 trials, 4–6 steps, 16–47 s each |
+| agent, 1 task | 9B, 512 image tokens, laptop CPU | 2/2 trials (1 traced), 4 steps, ~8.7 min each |
+| agent, same task | `holo3-1-35b-a3b`, H's API | 8/9 trials over 3 runs, 4–6 steps, 15–47 s each |
 
-- **Below ~512 image tokens, grounding does not degrade gracefully: it collapses.**
+- **Below 512 image tokens, grounding accuracy drops sharply:** at 128 tokens, the 9B hits 1 target out of 4 and the 4B none.
 - **On a CPU, memory management drives the agent's cost.** A step takes 80–100 s when the KV cache is re-used, and ~190–205 s when dropping an old screenshot breaks it.
 - **The evaluator can be wrong too.** The first hosted trial was scored a failure although the agent's answer was right.
 
@@ -45,6 +49,8 @@ One 1897×963 screenshot, 4 targets, temperature 0. The sweep caps the number of
 
 **Limits:** 4 targets on 1 screenshot is a smoke test, not a benchmark, and some misses are likely noise. [Full analysis](docs/grounding_analysis.md).
 
+Raw data in [`results/`](results/): one folder per sweep (4B and 9B), each with its `results.csv`, the server logs, and the screenshot annotated with every click for each budget (`clicks-<budget>.png`). The agent traces are in [`results/agent/`](results/agent/).
+
 ## Agent: a web task from scratch
 
 ```
@@ -54,22 +60,33 @@ task ──►  screenshot ──► Holo model ──► JSON step ──► Pl
                           or H's API)    tool_call}       scroll / answer)
 ```
 
-The task: start on `huggingface.co/Hcompany`, *"Open the page of the Holo 3.1 9B model and give its license."* Here is a local trial, with the orange rings where the model clicked:
+The task: start on `huggingface.co/Hcompany`, *"Open the page of the Holo 3.1 9B model and give its license."* The figure at the top is a local trial, with orange rings where the model clicked.
 
-![The agent's four steps: click the search bar, type the model name, click the result, answer](docs/agent-trajectory.png)
+Every traced trial, in [`results/agent/`](results/agent/):
 
-| | steps | end to end | waiting for the model |
-|---|---|---|---|
-| local 9B, trial of 2026-11-23 16:12 | 4 | 520 s | 508 s |
-| H's API, trial 1 | 4 | 23 s | 10 s |
-| H's API, trial 2 | 4 | 16 s | 7 s |
-| H's API, trial 3 | 6 | 47 s | 36 s |
+| run | model | cap per step | right answer | steps | end to end |
+|---|---|---|---|---|---|
+| 2026-11-23 16:12 | local 9B | 300 tokens | 1/1 | 4 | 520 s (508 s waiting for the model) |
+| 2026-11-26 17:46 | H's API | 300 tokens | 1/1, scored a failure by the first answer check | 4 | 25 s |
+| 2026-11-27 09:17 | H's API | 300 tokens | 3/3 | 4, 4, 6 | 23, 16, 47 s |
+| 2026-11-27 10:45 | H's API | 300 tokens | 2/3: trial 1 cut at step 2 by the cap | –, 4, 4 | 13, 17, 29 s |
+| 2026-11-27 10:53 | H's API | 600 tokens | 3/3 | 4, 4, 4 | 16, 15, 40 s |
+
+The "8/9 over 3 runs" above counts the three runs scored with the current check; with the mis-scored trial, 9 of the 10 hosted trials gave the right answer.
 
 - **The KV cache works across steps, images included**, until `keep_last=3` drops a screenshot: from step 4, most of the prompt is recomputed.
-- **With fast inference, the browser matters:** 8–13 s per hosted trial are spent outside model calls.
+- **With fast inference, the browser matters:** 7–13 s per hosted trial are spent outside model calls.
 - **The path can vary:** one hosted trial scrolled to the model instead of searching for it.
 
-**Limits:** one task and a handful of trials on a live website. This is not a model comparison: model, hardware and image budget all differ. The answer is checked with a regular expression, which cannot read negation. [Full analysis](docs/agent_analysis.md).
+**Limits:** one task and a handful of trials on a live website. The one hosted failure had its second step cut by the 300-token cap, hence `--max-tokens 600` below. This is not a model comparison: model, hardware and image budget all differ. The answer is checked with a regular expression, which cannot read negation. [Full analysis](docs/agent_analysis.md).
+
+## Deploying Holo: what these runs suggest
+
+- **On a CPU, cap the image budget, but not too far.** At 512 tokens the 9B kept 4/4 for about a quarter of the full-resolution latency; at 256 tokens and below, accuracy collapsed. Measure where this drop happens on the client's own screens before choosing a budget.
+- **On a CPU, the screenshot eviction policy is a cost decision.** Each eviction breaks the KV cache and roughly doubles the step time (80–100 s → 190–205 s). Evicting in batches should break it once every few steps instead of every step: still to be measured.
+- **On H's API, optimize the environment.** 7–13 s per trial were spent outside model calls: page loads and pauses in the browser are the next lever.
+- **Size `max_tokens` per model, and trace cut outputs.** The only hosted failure was a step cut at 300 tokens, not a wrong decision.
+- **Check the evaluator before trusting a success rate.** One right answer was scored a failure by the first answer check.
 
 ## Usage
 
@@ -96,13 +113,15 @@ cp .env.example .env
 
 ```bash
 uv run --env-file .env holo-agent --base-url https://api.hcompany.ai/v1/ \
-  --model holo3-1-35b-a3b --no-warmup --trials 3
+  --model holo3-1-35b-a3b --no-warmup --max-tokens 600 --trials 3
 ```
+
+`--max-tokens 600`: the hosted model writes longer thoughts than the local 9B, and the default of 300 tokens per step can cut its output.
 
 **Summarize a trial** (step table and two figures):
 
 ```bash
-uv run holo-agent-report runs/<stamp>/<task>/trial-1/trace.jsonl --out runs/report
+uv run holo-agent-report runs/<stamp>/<task>/trial-1/trace.jsonl
 ```
 
 **Locate a single element** on a screenshot:
@@ -115,6 +134,9 @@ uv run --env-file .env holo-locate screenshots/hf_home.png "the 'Models' link in
 `holo3-1-35b-a3b` has a free tier, limited to 10 requests per minute ([quickstart](https://hub.hcompany.ai/models-api/quickstart), November 2026). Other OpenAI-compatible endpoints (`--base-url`, `--model`, `--api-key`) need to support a JSON-schema `response_format` and accept `chat_template_kwargs`; only H's API and llama-server have been tested.
 
 ### Locally, with llama.cpp
+
+<details>
+<summary>Build llama.cpp, download the models, run the agent and the grounding sweep</summary>
 
 Tested on an Intel i7-1165G7 (4 cores), CPU only, WSL2 with 10 GB of RAM, llama.cpp build 12480.
 
@@ -136,7 +158,7 @@ uv run holo-serve --model 9b --budget 512   # llama-server with the KV cache on,
 
 ```bash
 uv run holo-agent --trials 3
-uv run holo-agent-report runs/<stamp>/<task>/trial-1/trace.jsonl --out runs/report
+uv run holo-agent-report runs/<stamp>/<task>/trial-1/trace.jsonl
 ```
 
 **Locate a single element**, with `holo-serve` running:
@@ -161,16 +183,18 @@ uv run holo-report results/*/results.csv --screenshot screenshots/hf_home.png
 
 A budget that was not measured on every model is left out, with a warning.
 
+</details>
+
 ### Options and outputs
 
-- `holo-agent`: `--task-id` runs a single task. With several `--trials`, they are interleaved across tasks, so that a slow drift such as CPU throttling spreads over all of them.
+- `holo-agent`: `--task-id` runs a single task. `--max-tokens` caps each step (default 300, sized for the local 9B on a CPU). With several `--trials`, they are interleaved across tasks, so that a slow drift such as CPU throttling spreads over all of them.
 - Each agent run writes to `runs/<stamp>/`: its settings (`run.json`), the exact tasks (`tasks.json`), the server settings (`server.json`, llama-server only) and, per trial, a trace and its screenshots.
-- Without `--out`, `holo-agent-report` overwrites the figures in `docs/`.
+- `holo-agent-report` writes its two figures to `runs/report/`; `--out` picks another folder.
 
 ## Next steps
 
+- A campaign of 5 tasks × 3 trials, locally and on H's API, for a first success rate and a failure classification (wrong click vs. wrong plan): the main open question, since the agent results rest on one task.
 - Grounding on 20–30 targets over several screenshots, with accuracy as a function of target size, and a 768-token budget.
-- A campaign of 5 tasks × 3 trials, locally and on H's API, for a first success rate and a failure classification (wrong click vs. wrong plan).
 - Batched screenshot eviction, measured against `keep_last=3`.
 - Record the API's token usage in the trace, so that hosted runs report their tokens too.
 - Tracing in [Langfuse](https://langfuse.com) on top of the JSONL trace.

@@ -10,14 +10,17 @@ def test_normalize_only_touches_case_and_whitespace():
     assert normalize("  Apache-2.0\n licence ") == "apache-2.0 licence"
 
 
-@pytest.mark.parametrize("answer", [
-    "apache-2.0",                                                   # trial 2026-11-23 16:12
-    "The license for the Holo 3.1 9B model is apache-2.0",          # trial 2026-11-23 13:46
-    "Apache 2.0",
-    "APACHE-2.0.",
-    "The Holo 3.1 9B model is licensed under Apache License 2.0.",  # trial 2026-11-26, H's API
-    "Apache License, Version 2.0",
-])
+@pytest.mark.parametrize(
+    "answer",
+    [
+        "apache-2.0",  # trial 2026-11-23 16:12
+        "The license for the Holo 3.1 9B model is apache-2.0",  # trial 2026-11-23 13:46
+        "Apache 2.0",
+        "APACHE-2.0.",
+        "The Holo 3.1 9B model is licensed under Apache License 2.0.",  # trial 2026-11-26, H's API
+        "Apache License, Version 2.0",
+    ],
+)
 def test_license_regex_accepts_formatting_variants(answer):
     assert check_answer(answer, LICENSE)
 

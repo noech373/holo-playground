@@ -19,8 +19,9 @@ def shot(i: int) -> Screenshot:
 
 def output(i: int) -> PolicyOutput:
     # Spaces after ':' and ',' as the model writes them: Memory must re-send this text verbatim.
-    raw = json.dumps({"note": None, "thought": f"step {i}",
-                      "tool_call": {"tool_name": "scroll", "direction": "down"}})
+    raw = json.dumps(
+        {"note": None, "thought": f"step {i}", "tool_call": {"tool_name": "scroll", "direction": "down"}}
+    )
     return PolicyOutput(Step.model_validate_json(raw), raw, {}, 0.0)
 
 
@@ -35,8 +36,13 @@ def run(n_steps: int, keep_last: int = 3) -> Memory:
 
 
 def images(messages: list[dict]) -> list[str]:
-    return [part["image_url"]["url"] for m in messages if isinstance(m["content"], list)
-            for part in m["content"] if part["type"] == "image_url"]
+    return [
+        part["image_url"]["url"]
+        for m in messages
+        if isinstance(m["content"], list)
+        for part in m["content"]
+        if part["type"] == "image_url"
+    ]
 
 
 def text(message: dict) -> str:

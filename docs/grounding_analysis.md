@@ -9,9 +9,9 @@ The sweep varies the number of tokens the image is encoded into (`--image-max-to
 ## Key findings
 
 - **Image tokens drive the latency.** Encoding the image and processing its tokens before the first output token (the *prefill*) accounts for 80–98 % of each request. The answer itself is only ~16 tokens. Halving the image budget roughly halves the latency.
-- **Accuracy holds down to ~512 tokens, then collapses.** At 512 tokens, the 9B is still within 4 px of the target center (median), on targets as small as 19×16 px. At 128 tokens, the 4B stops being imprecise and starts being wrong: it clicks on unrelated elements, up to 570 px from the target.
+- **Accuracy holds down to ~512 tokens, then drops sharply.** At 512 tokens, the 9B is still within 4 px of the target center (median), on targets as small as 19×16 px. At 128 tokens, the 4B stops being imprecise and starts being wrong: it clicks on unrelated elements, up to 570 px from the target.
 - **The 9B degrades more gracefully.** At 128 tokens it misses 3 targets out of 4, but never by more than 53 px from the target center, against 570 px for the 4B. Its larger language model seems to recover the page layout even when the image is too coarse to pinpoint a small icon.
-- **Best trade-off here: 9B at 512 tokens.** It hits 4/4 targets in 50 s, faster than the 4B at 1024 tokens (66 s) for a similar or better accuracy. On this machine, a bigger model looking at a smaller image beats a smaller model looking at a bigger one.
+- **Best trade-off here: 9B at 512 tokens.** It hits 4/4 targets at 50 s per click, faster than the 4B at 1024 tokens (66 s per click) for a similar or better accuracy. On this machine, a bigger model looking at a smaller image beats a smaller model looking at a bigger one.
 - **Generation speed follows the weight size.** The 9B generates tokens 1.8× slower than the 4B, and its weights are 1.8× larger (5.6 vs. 3.1 GB): each new token re-reads every weight from RAM, so generation is memory-bandwidth bound. Prefill, which processes tokens in batches, is only 1.4–1.7× slower. I haven't isolated why yet.
 
 ## Results
