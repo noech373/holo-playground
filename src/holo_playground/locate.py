@@ -1,7 +1,8 @@
-"""Ask a Holo model, served by llama-server, where to click on a screenshot."""
+"""Ask a Holo model, served by llama-server or a hosted API, where to click on a screenshot."""
 
 import argparse
 import json
+import os
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -11,6 +12,7 @@ from PIL import Image, ImageDraw
 from pydantic import BaseModel, Field
 
 from holo_playground.screen import COORD_SCALE, Screenshot
+from holo_playground.server import NO_THINKING
 
 # Grounding prompt from https://hub.hcompany.ai/models-api/element-localization.md
 PROMPT = """Localize an element on the GUI image according to the provided target and output a click position.
@@ -33,12 +35,15 @@ class Prediction:
     timings: dict = field(default_factory=dict)  # llama-server per-request timings
 
 
-def locate(client: OpenAI, screenshot: Screenshot, element: str) -> Prediction:
-    """Return the click predicted for `element`, constrained to valid JSON by the server."""
+def locate(client: OpenAI, screenshot: Screenshot, element: str, *, model: str = "holo") -> Prediction:
+    """Return the click predicted for `element`, constrained to valid JSON by the server.
+
+    model: llama-server serves a single model and ignores this name; a hosted API needs the real one.
+    """
     prompt = PROMPT.format(schema=json.dumps(CLICK_SCHEMA), element=element)
     start = time.perf_counter()
     response = client.chat.completions.create(
-        model="holo",  # llama-server serves a single model and ignores this name
+        model=model,
         messages=[
             {
                 "role": "user",
@@ -50,6 +55,7 @@ def locate(client: OpenAI, screenshot: Screenshot, element: str) -> Prediction:
         ],
         temperature=0.0,
         response_format={"type": "json_schema", "json_schema": {"name": "click", "schema": CLICK_SCHEMA}},
+        extra_body=NO_THINKING,
     )
     wall_s = time.perf_counter() - start
     content = response.choices[0].message.content
@@ -81,12 +87,22 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("image", type=Path, help="screenshot to search")
     parser.add_argument("element", help="natural-language description of the element to click")
-    parser.add_argument("--base-url", default="http://localhost:8080/v1")
+    parser.add_argument(
+        "--base-url",
+        default="http://localhost:8080/v1",
+        help="any OpenAI-compatible endpoint: llama-server, or a hosted API",
+    )
+    parser.add_argument(
+        "--model", default="holo", help="model name (llama-server ignores it, a hosted API needs it)"
+    )
+    parser.add_argument(
+        "--api-key", default=os.environ.get("HAI_API_KEY", "none"), help="default: $HAI_API_KEY"
+    )
     args = parser.parse_args()
 
     screenshot = Screenshot.load(args.image)
-    client = OpenAI(base_url=args.base_url, api_key="none")
-    pred = locate(client, screenshot, args.element)
+    client = OpenAI(base_url=args.base_url, api_key=args.api_key)
+    pred = locate(client, screenshot, args.element, model=args.model)
 
     x_px, y_px = screenshot.to_pixels(pred.click.x, pred.click.y)
     print(
@@ -100,6 +116,8 @@ def main() -> None:
             f" | gen {t['predicted_n']} tok in {t['predicted_ms'] / 1000:.1f} s"
             f" | total {pred.wall_s:.1f} s"
         )
+    else:  # a hosted API sends no llama-server timings
+        print(f"total {pred.wall_s:.1f} s")
     out = args.image.with_name(f"{args.image.stem}_click.png")
     draw_clicks(screenshot, [(x_px, y_px)], out)
     print(f"saved {out}")

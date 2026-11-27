@@ -129,7 +129,7 @@ Same agent, same system prompt, same task (temperature 0.8, last 3 screenshots),
 
 ### What every trial records
 
-`runs/<stamp>/<task>/trial-<n>/trace.jsonl` gets one line per step, written as soon as the step ends, so a crash or Ctrl-C keeps everything up to that point. Each line has the thought, note and action, the click in pixels, the URL before and after, tokens computed and reused, prefill and generation times, the wall time, and the screenshot file. Token counts and prefill/generation times come from llama-server: they are `null` on H's API. A final line holds the answer and two separate verdicts:
+`runs/<stamp>/<task>/trial-<n>/trace.jsonl` gets one line per step, written as soon as the step ends, so a crash or Ctrl-C keeps everything up to that point. Each line has the thought, note and action, the click in pixels, the URL before and after, tokens computed and reused, prefill and generation times, the wall time, and the screenshot file. Token counts and prefill/generation times come from llama-server: they are `null` on H's API, where `holo-agent-report` shows the wall time of each model call instead. A final line holds the answer and two separate verdicts:
 
 - `success`: the answer matches the task's check (a regular expression on the lowercased answer, so "Apache 2.0", "Apache License 2.0" and "The license is apache-2.0" all pass). Running out of steps, or an output that does not parse as a step, counts as a failure (`false`). Only an infrastructure crash gives `null`, so that it is neither counted as an agent failure nor silently dropped.
 - `reached_page`: whether the agent actually opened the page. A correct answer without it would be a guess, or something the model already knew.
@@ -148,7 +148,7 @@ Same agent, same system prompt, same task (temperature 0.8, last 3 screenshots),
 - A campaign of 5 tasks × 3 trials for a first success rate and a failure classification (wrong click vs. wrong plan, from the click positions and the thoughts).
 - Batched screenshot eviction, measured against `keep_last=3`.
 - The same campaign on H's API, to separate the model's ability from this laptop's latency.
-- Record the API's token usage in the trace, so that `holo-agent-report` also works on hosted runs.
+- Record the API's token usage in the trace, so that hosted runs report their tokens too.
 - Tracing in [Langfuse](https://langfuse.com) on top of the JSONL trace.
 
 ## Setup
@@ -191,6 +191,8 @@ Targets are a JSON list of `{name, element, box: [x0, y0, x1, y1]}`, where `elem
 uv run holo-report results/*/results.csv --screenshot screenshots/hf_home.png
 ```
 
+Any numeric budget is accepted. A budget that was not measured on every model is left out, with a warning.
+
 **Run the agent.** Start the model server in one terminal, then the agent in another:
 
 ```bash
@@ -210,7 +212,7 @@ uv run --env-file .env holo-agent --base-url https://api.hcompany.ai/v1/ \
   --model holo3-1-35b-a3b --no-warmup --trials 3
 ```
 
-`holo3-1-35b-a3b` has a free tier, limited to 10 requests per minute ([quickstart](https://hub.hcompany.ai/models-api/quickstart), November 2026). `holo-agent-report` and `holo-locate` do not support the hosted API yet: the first needs llama-server's timings, the second has no option for the key or the model name.
+`holo3-1-35b-a3b` has a free tier, limited to 10 requests per minute ([quickstart](https://hub.hcompany.ai/models-api/quickstart), November 2026). `holo-sweep` and `holo-serve` are local only, since they start llama-server themselves.
 
 `--base-url`, `--model` and `--api-key` accept other OpenAI-compatible endpoints, provided they support a JSON-schema `response_format` and accept `chat_template_kwargs`. Only llama-server and H's API have been tested.
 
@@ -218,6 +220,13 @@ uv run --env-file .env holo-agent --base-url https://api.hcompany.ai/v1/ \
 
 ```bash
 uv run holo-locate screenshots/hf_home.png "the 'Models' link in the top navigation bar"
+```
+
+The same command works on H's API, with the options of the agent:
+
+```bash
+uv run --env-file .env holo-locate screenshots/hf_home.png "the 'Models' link in the top navigation bar" \
+  --base-url https://api.hcompany.ai/v1/ --model holo3-1-35b-a3b
 ```
 
 ## How the sweep works

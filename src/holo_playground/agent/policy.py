@@ -8,6 +8,7 @@ from openai import OpenAI
 from pydantic import ValidationError
 
 from holo_playground.agent.actions import Step
+from holo_playground.server import NO_THINKING
 
 STEP_SCHEMA = Step.model_json_schema()
 # A step is 125-150 tokens with the short-thought rule: 300 leaves room
@@ -91,7 +92,7 @@ def policy(
         temperature=temperature,
         max_tokens=max_tokens,
         response_format={"type": "json_schema", "json_schema": {"name": "step", "schema": STEP_SCHEMA}},
-        extra_body={"chat_template_kwargs": {"enable_thinking": False}},
+        extra_body=NO_THINKING,
     )
     wall_s = time.perf_counter() - start
 

@@ -4,14 +4,15 @@ import argparse
 import csv
 import math
 import statistics
+import sys
 from collections import defaultdict
+from collections.abc import Iterable
 from pathlib import Path
 
 from matplotlib.figure import Figure
 from matplotlib.ticker import FuncFormatter
 from PIL import Image
 
-BUDGET_ORDER = ["128", "256", "512", "1024", "default"]
 # Qwen-VL: 16 px patches merged 2x2, so one image token covers 32x32 px of the resized image.
 TOKEN_PX = 32
 DEFAULT_MAX_TOKENS = 4096  # llama.cpp's cap for Qwen-VL when --image-max-tokens is not set
@@ -26,6 +27,22 @@ def load(csv_paths: list[Path]) -> dict[tuple[str, str], list[dict]]:
             for row in csv.DictReader(f):
                 groups[(row["model"], row["image_max_tokens"])].append(row)
     return groups
+
+
+def budget_order(budget: str) -> tuple[int, bool]:
+    """Sort key: numeric budgets in increasing order, "default" where its cap puts it."""
+    if budget == "default":
+        return DEFAULT_MAX_TOKENS, True
+    return int(budget), False
+
+
+def shared_budgets(keys: Iterable[tuple[str, str]]) -> tuple[list[str], list[str]]:
+    """Split the budgets of (model, budget) keys: measured on every model, and on some only."""
+    keys = set(keys)
+    models = {m for m, _ in keys}
+    budgets = sorted({b for _, b in keys}, key=budget_order)
+    shared = [b for b in budgets if all((m, b) in keys for m in models)]
+    return shared, [b for b in budgets if b not in shared]
 
 
 def image_tokens(width: int, height: int, budget: str) -> int:
@@ -136,7 +153,11 @@ def main() -> None:
     groups = load(args.csvs)
     stats = {key: summarize(rows) for key, rows in groups.items()}
     models = sorted({m for m, _ in groups})
-    budgets = [b for b in BUDGET_ORDER if all((m, b) in stats for m in models)]
+    budgets, skipped = shared_budgets(groups)
+    if skipped:
+        print(f"skipped budgets not measured on every model: {', '.join(skipped)}", file=sys.stderr)
+    if not budgets:
+        raise SystemExit("no budget is measured on every model: nothing to compare")
     with Image.open(args.screenshot) as img:
         n_image = {b: image_tokens(*img.size, b) for b in budgets}
 
