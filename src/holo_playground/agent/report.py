@@ -37,14 +37,24 @@ def action(step: dict) -> str:
     return call["tool_name"]
 
 
+def has_timings(steps: list[dict]) -> bool:
+    """True if every step has llama-server's timings. They are null on a hosted API."""
+    keys = ("prompt_n", "cache_n", "prompt_ms", "gen_tokens", "gen_ms")
+    return all(s[k] is not None for s in steps for k in keys)
+
+
 def markdown_table(steps: list[dict], end: dict) -> str:
-    rows = ["| step | action | computed tokens (prompt_n) | cached tokens (cache_n) "
-            "| prefill | generation | total |",
-            "|---|---|---|---|---|---|---|"]
-    for s in steps:
-        rows.append(f"| {s['step']} | {action(s)} | {s['prompt_n']} | {s['cache_n']} | "
-                    f"{s['prompt_ms'] / 1000:.0f} s | {s['gen_ms'] / 1000:.0f} s ({s['gen_tokens']} tok) | "
-                    f"{s['wall_s']:.0f} s |")
+    if has_timings(steps):
+        rows = ["| step | action | computed tokens (prompt_n) | cached tokens (cache_n) "
+                "| prefill | generation | total |",
+                "|---|---|---|---|---|---|---|"]
+        for s in steps:
+            rows.append(f"| {s['step']} | {action(s)} | {s['prompt_n']} | {s['cache_n']} | "
+                        f"{s['prompt_ms'] / 1000:.0f} s | "
+                        f"{s['gen_ms'] / 1000:.0f} s ({s['gen_tokens']} tok) | {s['wall_s']:.0f} s |")
+    else:
+        rows = ["| step | action | model call |", "|---|---|---|"]
+        rows += [f"| {s['step']} | {action(s)} | {s['wall_s']:.1f} s |" for s in steps]
     rows.append(f"\n{end['stop_reason']} after {end['n_steps']} steps in {end['total_s']:.0f} s: "
                 f"{end['answer']!r}, success={end['success']}, reached_page={end.get('reached_page')}")
     return "\n".join(rows)
@@ -74,39 +84,52 @@ def plot_trajectory(steps: list[dict], run_dir: Path, out: Path) -> None:
 
 
 def plot_step_cost(steps: list[dict], out: Path) -> None:
-    """Seconds per step, split into prefill and generation; computed vs. cached tokens on top."""
+    """Seconds per step. With llama-server's timings: split into prefill and generation, computed vs.
+    cached tokens on top. Without them: the wall time of each model call.
+    """
+    detailed = has_timings(steps)
     xs = range(len(steps))
-    prefill = [s["prompt_ms"] / 1000 for s in steps]
-    gen = [s["gen_ms"] / 1000 for s in steps]
     fig = Figure(figsize=(7.5, 3.8), dpi=150)
     ax = fig.subplots()
-    # edgecolor=SURFACE: a thin gap between the two stacked segments
-    ax.bar(xs, prefill, width=0.55, color=PREFILL, edgecolor=SURFACE, linewidth=1)
-    ax.bar(xs, gen, width=0.55, bottom=prefill, color=GEN, edgecolor=SURFACE, linewidth=1)
-    for x, s, p, g in zip(xs, steps, prefill, gen, strict=True):
-        ax.annotate(f"{s['prompt_n']:,} computed\n{s['cache_n']:,} cached", (x, p + g),
-                    xytext=(0, 4), textcoords="offset points", ha="center", va="bottom",
+    labels = [f"{s['step']}\n{s['tool_call']['tool_name']}" for s in steps]
+    if detailed:
+        prefill = [s["prompt_ms"] / 1000 for s in steps]
+        gen = [s["gen_ms"] / 1000 for s in steps]
+        # edgecolor=SURFACE: a thin gap between the two stacked segments
+        ax.bar(xs, prefill, width=0.55, color=PREFILL, edgecolor=SURFACE, linewidth=1)
+        ax.bar(xs, gen, width=0.55, bottom=prefill, color=GEN, edgecolor=SURFACE, linewidth=1)
+        tops = [p + g for p, g in zip(prefill, gen, strict=True)]
+        notes = [f"{s['prompt_n']:,} computed\n{s['cache_n']:,} cached" for s in steps]
+        for i in range(1, len(steps)):
+            prev, s = steps[i - 1], steps[i]
+            # The cache only shrinks when the prompt's prefix changed: here, a screenshot evicted.
+            if s["cache_n"] < prev["cache_n"] + prev["prompt_n"] - 50:
+                labels[i] += "\n(screenshot evicted)"
+        title = ("Time per agent step (Holo 3.1 9B, CPU), with prompt tokens computed vs. reused "
+                 "from the KV cache")
+        handles = [Patch(color=PREFILL, label="prefill (reading the prompt)"),
+                   Patch(color=GEN, label="generation (writing the step)")]
+    else:
+        tops = [s["wall_s"] for s in steps]
+        ax.bar(xs, tops, width=0.55, color=PREFILL)
+        notes = [f"{t:.1f} s" for t in tops]
+        title = "Time per agent step: wall time of each model call (no server timings)"
+        handles = []
+    for x, top, note in zip(xs, tops, notes, strict=True):
+        ax.annotate(note, (x, top), xytext=(0, 4), textcoords="offset points", ha="center", va="bottom",
                     fontsize=8, color=MUTED)
-    labels = []
-    for prev, s in zip([None, *steps], steps, strict=False):  # (previous, current) pairs
-        # The cache only shrinks when the prompt's prefix changed: here, a screenshot evicted.
-        reset = prev is not None and s["cache_n"] < prev["cache_n"] + prev["prompt_n"] - 50
-        label = f"{s['step']}\n{s['tool_call']['tool_name']}"
-        labels.append(label + ("\n(screenshot evicted)" if reset else ""))
     ax.set_xticks(list(xs), labels)
     ax.set_ylabel("seconds", color=MUTED)
-    ax.set_ylim(0, max(p + g for p, g in zip(prefill, gen, strict=True)) * 1.28)
+    ax.set_ylim(0, max(tops) * 1.28)
     ax.grid(axis="y", color=GRID, linewidth=0.8)
     ax.set_axisbelow(True)
     ax.tick_params(colors=MUTED, length=0)
     for side in ("top", "right", "left"):
         ax.spines[side].set_visible(False)
     ax.spines["bottom"].set_color(GRID)
-    ax.set_title("Time per agent step (Holo 3.1 9B, CPU), with prompt tokens computed vs. reused "
-                 "from the KV cache", loc="left", fontsize=9.5, color=INK)
-    ax.legend(handles=[Patch(color=PREFILL, label="prefill (reading the prompt)"),
-                       Patch(color=GEN, label="generation (writing the step)")],
-              frameon=False, loc="upper left", fontsize=8.5)
+    ax.set_title(title, loc="left", fontsize=9.5, color=INK)
+    if handles:
+        ax.legend(handles=handles, frameon=False, loc="upper left", fontsize=8.5)
     fig.tight_layout()
     fig.savefig(out, facecolor=SURFACE)
     print(f"saved {out}")
