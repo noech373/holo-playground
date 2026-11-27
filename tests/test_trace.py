@@ -16,8 +16,7 @@ def test_lines_carry_ids_type_and_step_count(tmp_path):
 
     lines = read_lines(path)
     assert [line["type"] for line in lines] == ["step", "step", "end"]
-    assert all(line["run_id"] == "r1" and line["task_id"] == "t1" and line["trial"] == 2
-               for line in lines)
+    assert all(line["run_id"] == "r1" and line["task_id"] == "t1" and line["trial"] == 2 for line in lines)
     assert lines[-1]["n_steps"] == 2
     assert lines[1]["note"] == "licence: apache-2.0"
 

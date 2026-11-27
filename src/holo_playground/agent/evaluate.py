@@ -7,12 +7,14 @@ from pydantic import BaseModel, ConfigDict, field_validator
 
 class Contains(BaseModel):
     """The normalized answer contains this text (normalized the same way)."""
+
     model_config = ConfigDict(extra="forbid")
     contains: str
 
 
 class Regex(BaseModel):
     """re.search on the normalized (lowercase) answer: write the pattern in lowercase."""
+
     model_config = ConfigDict(extra="forbid")
     regex: str
 

@@ -38,14 +38,17 @@ def test_check_type_is_picked_from_its_key(tmp_path):
     assert regex_task.allowed_domains == frozenset({"huggingface.co"})
 
 
-@pytest.mark.parametrize("change", [
-    {"must_vist": "/Hcompany"},                           # typo in a field name
-    {"check": {"contains": "a", "regex": "b"}},           # two checks in one
-    {"check": {"regx": "apache"}},                        # typo in the check
-    {"check": {"regex": "apache(2.0"}},                   # pattern does not compile
-    {"id": "Holo License"},                               # not usable as a directory name
-    {"start_url": "https://github.com/hcompany"},         # blocked by its own guardrail
-])
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"must_vist": "/Hcompany"},  # typo in a field name
+        {"check": {"contains": "a", "regex": "b"}},  # two checks in one
+        {"check": {"regx": "apache"}},  # typo in the check
+        {"check": {"regex": "apache(2.0"}},  # pattern does not compile
+        {"id": "Holo License"},  # not usable as a directory name
+        {"start_url": "https://github.com/hcompany"},  # blocked by its own guardrail
+    ],
+)
 def test_invalid_task_fails_at_load(tmp_path, change):
     with pytest.raises(ValidationError):
         load_tasks(write(tmp_path, [{**GOOD, **change}]))

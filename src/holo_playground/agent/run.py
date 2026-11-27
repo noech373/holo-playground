@@ -16,7 +16,13 @@ from holo_playground.agent.actions import AnswerArgs, ClickArgs
 from holo_playground.agent.browser import Browser
 from holo_playground.agent.evaluate import check_answer
 from holo_playground.agent.memory import Memory
-from holo_playground.agent.policy import InvalidStep, TruncatedStep, build_system_prompt, policy
+from holo_playground.agent.policy import (
+    MAX_TOKENS,
+    InvalidStep,
+    TruncatedStep,
+    build_system_prompt,
+    policy,
+)
 from holo_playground.agent.tasks import Task, load_tasks
 from holo_playground.agent.trace import Trace
 from holo_playground.server import warm_up
@@ -26,11 +32,20 @@ MAX_STEPS = 10
 
 @dataclass
 class TrialResult:
+    """Outcome of one trial.
+
+    success: False for any agent failure (wrong answer, max_steps, truncated, invalid_step). None
+    only when it cannot be judged: the task has no check, or the trial crashed (an infra failure,
+    recorded in the trace's end line). Whether the agent reached the page is judged apart
+    (reached_page in the trace): a right answer without reaching the page is a guess.
+    """
+
     answer: str | None
     n_steps: int
     stop_reason: str  # "answer" | "max_steps" | "truncated" | "invalid_step"
     visited: list[str] = field(default_factory=list)
-    success: bool | None = None  # set by run_trial; None when the task has no check
+    success: bool | None = None  # set by run_trial
+    raw_output: str | None = None  # the model's text when it was not a usable step (truncated, invalid)
 
 
 def run_trial(
@@ -42,6 +57,7 @@ def run_trial(
     keep_last: int = 3,
     temperature: float = 0.8,
     max_steps: int = MAX_STEPS,
+    max_tokens: int = MAX_TOKENS,
     run_id: str = "",
     trial: int = 1,
     make_browser: Callable[[frozenset[str]], Browser] = Browser,
@@ -51,34 +67,54 @@ def run_trial(
     start = time.perf_counter()
     with Trace(run_dir / "trace.jsonl", run_id=run_id, task_id=task.id, trial=trial) as trace:
         try:
-            result = _loop(client, model, task, run_dir, trace, make_browser,
-                           keep_last=keep_last, temperature=temperature, max_steps=max_steps)
+            result = _loop(
+                client,
+                model,
+                task,
+                run_dir,
+                trace,
+                make_browser,
+                keep_last=keep_last,
+                temperature=temperature,
+                max_steps=max_steps,
+                max_tokens=max_tokens,
+            )
         except Exception as e:
-            trace.end(stop_reason="error", answer=None, success=None,
-                      total_s=round(time.perf_counter() - start, 2), error=repr(e))
+            trace.end(
+                stop_reason="error",
+                answer=None,
+                success=None,
+                total_s=round(time.perf_counter() - start, 2),
+                error=repr(e),
+            )
             raise
-        # success: false for an agent failure (wrong answer, max_steps, truncated, invalid_step),
-        # null only when it cannot be judged (no check, or the error branch above: an infra
-        # failure). reached_page is kept apart: a right answer without reaching the page is a guess.
         result.success = check_answer(result.answer, task.check) if task.check else None
         trace.end(
             stop_reason=result.stop_reason,
             answer=result.answer,
             success=result.success,
-            reached_page=(any(task.must_visit in url for url in result.visited)
-                          if task.must_visit else None),
+            reached_page=(any(task.must_visit in url for url in result.visited) if task.must_visit else None),
             total_s=round(time.perf_counter() - start, 2),
+            raw_output=result.raw_output,
         )
     return result
 
 
-def _loop(client: OpenAI, model: str, task: Task, run_dir: Path, trace: Trace,
-          make_browser: Callable[[frozenset[str]], Browser], *,
-          keep_last: int, temperature: float, max_steps: int) -> TrialResult:
+def _loop(
+    client: OpenAI,
+    model: str,
+    task: Task,
+    run_dir: Path,
+    trace: Trace,
+    make_browser: Callable[[frozenset[str]], Browser],
+    *,
+    keep_last: int,
+    temperature: float,
+    max_steps: int,
+    max_tokens: int,
+) -> TrialResult:
     with make_browser(task.allowed_domains) as browser:
-        state = Memory(
-            system=build_system_prompt(), task=task.instruction, keep_last=keep_last
-        )
+        state = Memory(system=build_system_prompt(), task=task.instruction, keep_last=keep_last)
         browser.reset(task.start_url)
         visited = [browser.page.url]
 
@@ -89,14 +125,14 @@ def _loop(client: OpenAI, model: str, task: Task, run_dir: Path, trace: Trace,
 
             try:
                 output = policy(
-                    client, state.messages(), model=model, temperature=temperature
+                    client, state.messages(), model=model, temperature=temperature, max_tokens=max_tokens
                 )
-            except TruncatedStep:
-                return TrialResult(None, i, "truncated", visited)
+            except TruncatedStep as e:
+                print(f"step {i}: truncated: {e}", flush=True)
+                return TrialResult(None, i, "truncated", visited, raw_output=e.raw)
             except InvalidStep as e:
-                # A format failure of the agent, not an infra crash: success false, not null.
                 print(f"step {i}: invalid step: {e}", flush=True)
-                return TrialResult(None, i, "invalid_step", visited)
+                return TrialResult(None, i, "invalid_step", visited, raw_output=e.raw)
 
             tool_call = output.step.tool_call
             t = output.timings
@@ -138,6 +174,7 @@ def _loop(client: OpenAI, model: str, task: Task, run_dir: Path, trace: Trace,
                 gen_tokens=t.get("predicted_n"),
                 gen_ms=t.get("predicted_ms"),
                 wall_s=round(output.wall_s, 2),
+                retries=output.retries,
                 screenshot=shot_name,
             )
             if isinstance(tool_call, AnswerArgs):
@@ -178,15 +215,17 @@ def main() -> None:
         help="default: $HAI_API_KEY",
     )
     parser.add_argument("--tasks", type=Path, default=Path("tasks/hf.json"), help="JSON task file")
-    parser.add_argument(
-        "--task-id", action="append", help="run only this task (repeatable); default: all"
-    )
+    parser.add_argument("--task-id", action="append", help="run only this task (repeatable); default: all")
     parser.add_argument("--trials", type=int, default=1, help="trials per task")
     parser.add_argument("--keep-last", type=int, default=3)
     parser.add_argument("--temperature", type=float, default=0.8)
     parser.add_argument(
-        "--no-warmup", action="store_true", help="skip the unmeasured warm-up request"
+        "--max-tokens",
+        type=int,
+        default=MAX_TOKENS,
+        help=f"cap on the tokens of one step (default {MAX_TOKENS}, sized for the local 9B; 600 for H's API)",
     )
+    parser.add_argument("--no-warmup", action="store_true", help="skip the unmeasured warm-up request")
     args = parser.parse_args()
 
     tasks = load_tasks(args.tasks)
@@ -207,9 +246,7 @@ def main() -> None:
     save_server_props(args.base_url, root / "server.json")
     settings = {k: v for k, v in vars(args).items() if k not in ("api_key", "tasks", "task_id")}
     (root / "run.json").write_text(json.dumps({**settings, "tasks_file": str(args.tasks)}, indent=2))
-    (root / "tasks.json").write_text(
-        json.dumps([t.model_dump(mode="json") for t in tasks], indent=2)
-    )
+    (root / "tasks.json").write_text(json.dumps([t.model_dump(mode="json") for t in tasks], indent=2))
 
     summary = []
     for trial in range(1, args.trials + 1):
@@ -218,8 +255,17 @@ def main() -> None:
             run_dir = root / task.id / f"trial-{trial}"
             start = time.perf_counter()
             try:
-                result = run_trial(client, args.model, task, run_dir, keep_last=args.keep_last,
-                                   temperature=args.temperature, run_id=run_id, trial=trial)
+                result = run_trial(
+                    client,
+                    args.model,
+                    task,
+                    run_dir,
+                    keep_last=args.keep_last,
+                    temperature=args.temperature,
+                    max_tokens=args.max_tokens,
+                    run_id=run_id,
+                    trial=trial,
+                )
                 outcome = (result.stop_reason, result.n_steps, result.answer, result.success)
             except Exception as e:
                 # One crashed trial must not cost the rest of the night. Its trace already
@@ -227,8 +273,7 @@ def main() -> None:
                 print(f"trial crashed: {e!r}", flush=True)
                 outcome = ("error", None, None, None)
             summary.append((task.id, trial, *outcome, time.perf_counter() - start))
-            print(f"{outcome[0]} after {outcome[1]} steps: {outcome[2]!r}, success={outcome[3]}",
-                  flush=True)
+            print(f"{outcome[0]} after {outcome[1]} steps: {outcome[2]!r}, success={outcome[3]}", flush=True)
 
     print("\n| task | trial | stop | steps | success | time |\n|---|---|---|---|---|---|")
     for task_id, trial, stop, n_steps, _answer, success, seconds in summary:

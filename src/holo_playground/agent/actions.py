@@ -9,6 +9,7 @@ from holo_playground.screen import COORD_SCALE
 
 class ClickArgs(BaseModel):
     """Click at (x, y) coordinates"""
+
     tool_name: Literal["click"]
     element: str
     x: int = Field(ge=0, le=COORD_SCALE, description="X coordinate as integer in [0, 1000]")
@@ -17,6 +18,7 @@ class ClickArgs(BaseModel):
 
 class WriteArgs(BaseModel):
     """Type text into the currently focused element without clicking first"""
+
     tool_name: Literal["write"]
     content: str = Field(description="Content to write")
     press_enter: bool = Field(default=False, description="Whether to press Enter after typing")
@@ -24,12 +26,14 @@ class WriteArgs(BaseModel):
 
 class ScrollArgs(BaseModel):
     """Scroll the page by about three quarters of the screen"""
+
     tool_name: Literal["scroll"]
     direction: Literal["up", "down"] = Field(description="Direction to scroll")
 
 
 class AnswerArgs(BaseModel):
     """Provide a final answer"""
+
     tool_name: Literal["answer"]
     content: str = Field(description="The answer content")
 

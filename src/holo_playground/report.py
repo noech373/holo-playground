@@ -95,8 +95,14 @@ def markdown_table(stats: dict, models: list[str], budgets: list[str], n_image: 
     return "\n".join(lines)
 
 
-def plot(stats: dict, models: list[str], budgets: list[str], n_image: dict[str, int], out: Path,
-         min_target_px: int | None = None) -> None:
+def plot(
+    stats: dict,
+    models: list[str],
+    budgets: list[str],
+    n_image: dict[str, int],
+    out: Path,
+    min_target_px: int | None = None,
+) -> None:
     labels = [f"{budget_label(b)}\n({n_image[b]})" for b in budgets]
     xs = range(len(budgets))
     fig = Figure(figsize=(10, 4), dpi=150)  # no pyplot: no GUI backend needed
@@ -115,24 +121,58 @@ def plot(stats: dict, models: list[str], budgets: list[str], n_image: dict[str, 
         series = [stats[(model, b)] for b in budgets]
         offset = (i - (len(models) - 1) / 2) * 0.12  # keep the two models' dots apart
         for x, s in zip(xs, series, strict=True):  # individual targets, faint
-            ax_acc.scatter([x + offset] * len(s["dists"]), s["dists"], s=14, color=color, alpha=0.35,
-                            linewidths=0)
-        ax_acc.plot(xs, [s["median_dist"] for s in series], color=color, linewidth=2, marker="o",
-                    markersize=6, label=model.upper())
-        ax_lat.plot(xs, [s["total_s"] for s in series], color=color, linewidth=2, marker="o",
-                    markersize=6, label=model.upper())
+            ax_acc.scatter(
+                [x + offset] * len(s["dists"]), s["dists"], s=14, color=color, alpha=0.35, linewidths=0
+            )
+        ax_acc.plot(
+            xs,
+            [s["median_dist"] for s in series],
+            color=color,
+            linewidth=2,
+            marker="o",
+            markersize=6,
+            label=model.upper(),
+        )
+        ax_lat.plot(
+            xs,
+            [s["total_s"] for s in series],
+            color=color,
+            linewidth=2,
+            marker="o",
+            markersize=6,
+            label=model.upper(),
+        )
         last = series[-1]
-        ax_lat.annotate(f"{model.upper()}  {last['total_s']:.0f} s", (len(budgets) - 1, last["total_s"]),
-                        xytext=(8, 0), textcoords="offset points", va="center", color=INK, fontsize=9)
+        ax_lat.annotate(
+            f"{model.upper()}  {last['total_s']:.0f} s",
+            (len(budgets) - 1, last["total_s"]),
+            xytext=(8, 0),
+            textcoords="offset points",
+            va="center",
+            color=INK,
+            fontsize=9,
+        )
 
     ax_acc.set_yscale("log")
     ax_acc.yaxis.set_major_formatter(FuncFormatter(lambda v, _: f"{v:g}"))
     if min_target_px:
         ax_acc.axhline(min_target_px / 2, color=MUTED, linewidth=1, linestyle=(0, (4, 3)))
-        ax_acc.text(0.99, min_target_px / 2 * 1.08, f"half the smallest target ({min_target_px / 2:g} px)",
-                    transform=ax_acc.get_yaxis_transform(), ha="right", va="bottom", color=MUTED, fontsize=8)
-    ax_acc.set_title("Distance from click to target center (px, log)\nline = median, dots = each target",
-                    loc="left", fontsize=10, color=INK)
+        ax_acc.text(
+            0.99,
+            min_target_px / 2 * 1.08,
+            f"half the smallest target ({min_target_px / 2:g} px)",
+            transform=ax_acc.get_yaxis_transform(),
+            ha="right",
+            va="bottom",
+            color=MUTED,
+            fontsize=8,
+        )
+    ax_acc.set_title(
+        "Distance from click to target center (px, log)\nline = median, dots = each target",
+        loc="left",
+        fontsize=10,
+        color=INK,
+    )
     ax_lat.set_title("Latency per request (s), CPU only", loc="left", fontsize=10, color=INK)
     ax_lat.set_ylim(bottom=0)
     ax_lat.set_xlim(right=len(budgets) - 0.4)
@@ -145,8 +185,12 @@ def plot(stats: dict, models: list[str], budgets: list[str], n_image: dict[str, 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("csvs", type=Path, nargs="+", help="results.csv files written by holo-sweep")
-    parser.add_argument("--screenshot", type=Path, required=True,
-                        help="screenshot the sweeps ran on, to count its image tokens")
+    parser.add_argument(
+        "--screenshot",
+        type=Path,
+        required=True,
+        help="screenshot the sweeps ran on, to count its image tokens",
+    )
     parser.add_argument("--chart", type=Path, default=Path("docs/sweep.png"))
     args = parser.parse_args()
 

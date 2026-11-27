@@ -16,10 +16,10 @@ The agent is written from scratch (Playwright, Pydantic, no agent framework) and
 | experiment | model and machine | result |
 |---|---|---|
 | grounding, 4 targets | 9B, 512 image tokens, laptop CPU | 4/4 hits, 50 s per click (187 s at full resolution) |
-| agent, 1 task | 9B, 512 image tokens, laptop CPU | 2/2 trials, 4 steps, ~8.7 min each |
+| agent, 1 task | 9B, 512 image tokens, laptop CPU | 2/2 trials (1 traced), 4 steps, ~8.7 min each |
 | agent, same task | `holo3-1-35b-a3b`, H's API | 3/3 trials, 4–6 steps, 16–47 s each |
 
-- **Below ~512 image tokens, grounding does not degrade gracefully: it collapses.**
+- **Below 512 image tokens, grounding accuracy drops sharply:** at 128 tokens, the 9B hits 1 target out of 4 and the 4B none.
 - **On a CPU, memory management drives the agent's cost.** A step takes 80–100 s when the KV cache is re-used, and ~190–205 s when dropping an old screenshot breaks it.
 - **The evaluator can be wrong too.** The first hosted trial was scored a failure although the agent's answer was right.
 
@@ -44,6 +44,8 @@ One 1897×963 screenshot, 4 targets, temperature 0. The sweep caps the number of
 - **The 9B degrades more gracefully:** at 128 tokens its worst click is 53 px from the target center, against 570 px for the 4B.
 
 **Limits:** 4 targets on 1 screenshot is a smoke test, not a benchmark, and some misses are likely noise. [Full analysis](docs/grounding_analysis.md).
+
+Raw data in [`results/`](results/): one folder per sweep (4B and 9B), each with its `results.csv`, the server logs, and the screenshot annotated with every click for each budget (`clicks-<budget>.png`). The agent traces are in [`results/agent/`](results/agent/).
 
 ## Agent: a web task from scratch
 
@@ -96,13 +98,15 @@ cp .env.example .env
 
 ```bash
 uv run --env-file .env holo-agent --base-url https://api.hcompany.ai/v1/ \
-  --model holo3-1-35b-a3b --no-warmup --trials 3
+  --model holo3-1-35b-a3b --no-warmup --max-tokens 600 --trials 3
 ```
+
+`--max-tokens 600`: the hosted model writes longer thoughts than the local 9B, and the default of 300 tokens per step can cut its output.
 
 **Summarize a trial** (step table and two figures):
 
 ```bash
-uv run holo-agent-report runs/<stamp>/<task>/trial-1/trace.jsonl --out runs/report
+uv run holo-agent-report runs/<stamp>/<task>/trial-1/trace.jsonl
 ```
 
 **Locate a single element** on a screenshot:
@@ -136,7 +140,7 @@ uv run holo-serve --model 9b --budget 512   # llama-server with the KV cache on,
 
 ```bash
 uv run holo-agent --trials 3
-uv run holo-agent-report runs/<stamp>/<task>/trial-1/trace.jsonl --out runs/report
+uv run holo-agent-report runs/<stamp>/<task>/trial-1/trace.jsonl
 ```
 
 **Locate a single element**, with `holo-serve` running:
@@ -163,9 +167,9 @@ A budget that was not measured on every model is left out, with a warning.
 
 ### Options and outputs
 
-- `holo-agent`: `--task-id` runs a single task. With several `--trials`, they are interleaved across tasks, so that a slow drift such as CPU throttling spreads over all of them.
+- `holo-agent`: `--task-id` runs a single task. `--max-tokens` caps each step (default 300, sized for the local 9B on a CPU). With several `--trials`, they are interleaved across tasks, so that a slow drift such as CPU throttling spreads over all of them.
 - Each agent run writes to `runs/<stamp>/`: its settings (`run.json`), the exact tasks (`tasks.json`), the server settings (`server.json`, llama-server only) and, per trial, a trace and its screenshots.
-- Without `--out`, `holo-agent-report` overwrites the figures in `docs/`.
+- `holo-agent-report` writes its two figures to `runs/report/`; `--out` picks another folder.
 
 ## Next steps
 

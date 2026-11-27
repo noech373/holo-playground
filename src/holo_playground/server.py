@@ -21,11 +21,13 @@ MODELS = {
         MODELS_DIR / "holo-3.1-9b/Holo-3.1-9B.mmproj-Q8_0.gguf",
     ),
 }
-# Tuned for a 4-core CPU-only machine with ~8 GB of RAM.
+# Tuned for a 4-core CPU-only machine: WSL2 capped at 10 GB of RAM, ~7 GB free for the model.
+# fmt: off
 SERVER_FLAGS = [
     "-c", "8192", "-np", "1", "-t", "4", "-tb", "6",
     "-fa", "on", "-ctk", "q8_0", "-ctv", "q8_0",
 ]
+# fmt: on
 DEFAULT_BUDGET = "default"
 STARTUP_TIMEOUT_S = 600  # a cold load of the 9B (weights not in the page cache) took >300 s
 STOP_TIMEOUT_S = 10
@@ -62,9 +64,13 @@ def start_server(
     if server_up(port):
         raise RuntimeError(f"a server is already running on port {port}, stop it first")
     gguf, mmproj = MODELS[model]
-    cmd = [str(LLAMA_SERVER), "-m", str(gguf), "-mm", str(mmproj), *SERVER_FLAGS,
-            "--reasoning-budget", str(reasoning_budget),
-            "--alias", f"holo-3.1-{model}", "--port", str(port)]
+    # fmt: off
+    cmd = [
+        str(LLAMA_SERVER), "-m", str(gguf), "-mm", str(mmproj), *SERVER_FLAGS,
+        "--reasoning-budget", str(reasoning_budget),
+        "--alias", f"holo-3.1-{model}", "--port", str(port),
+    ]
+    # fmt: on
     if not cache_prompt:
         cmd.append("--no-cache-prompt")
     if budget != DEFAULT_BUDGET:
@@ -72,8 +78,7 @@ def start_server(
     log.parent.mkdir(parents=True, exist_ok=True)
     with log.open("w") as log_file:
         # Own session: a Ctrl-C in the terminal reaches only us, and we stop the server once.
-        proc = subprocess.Popen(cmd, stdout=log_file, stderr=subprocess.STDOUT,
-                                start_new_session=True)
+        proc = subprocess.Popen(cmd, stdout=log_file, stderr=subprocess.STDOUT, start_new_session=True)
     deadline = time.monotonic() + STARTUP_TIMEOUT_S
     while not server_up(port):
         if proc.poll() is not None or time.monotonic() > deadline:
@@ -119,25 +124,35 @@ def main() -> None:
     parser.add_argument("--model", choices=sorted(MODELS), default="9b")
     parser.add_argument("--budget", default="512", help="--image-max-tokens, or 'default'")
     parser.add_argument("--port", type=int, default=8080)
-    parser.add_argument("--no-cache", action="store_true",
-                        help="re-process the whole prompt at every request (to measure without the KV cache)")
+    parser.add_argument(
+        "--no-cache",
+        action="store_true",
+        help="re-process the whole prompt at every request (to measure without the KV cache)",
+    )
     parser.add_argument("--log", type=Path, help="server log (default: runs/server-<stamp>.log)")
     args = parser.parse_args()
 
     log = args.log or Path("runs") / f"server-{datetime.now():%Y%m%d-%H%M%S}.log"
     cache = "off" if args.no_cache else "on"
-    print(f"starting {args.model} (image budget {args.budget}, KV cache {cache}), log in {log} ...",
-            flush=True)
+    print(
+        f"starting {args.model} (image budget {args.budget}, KV cache {cache}), log in {log} ...", flush=True
+    )
     # KV cache on by default: the agent appends messages step after step and re-uses it.
     proc = start_server(args.model, args.budget, args.port, log, cache_prompt=not args.no_cache)
     try:
         client = OpenAI(base_url=f"http://localhost:{args.port}/v1", api_key="none")
         print(f"warm-up: {warm_up(client, f'holo-3.1-{args.model}'):.1f} s", flush=True)
-        print(f"ready: http://localhost:{args.port}/v1  model alias holo-3.1-{args.model}  (Ctrl-C to stop)",
-                flush=True)
+        print(
+            f"ready: http://localhost:{args.port}/v1  model alias holo-3.1-{args.model}  (Ctrl-C to stop)",
+            flush=True,
+        )
         proc.wait()
         print(f"llama-server exited with code {proc.returncode}, see {log}")
     except KeyboardInterrupt:
         print("stopping llama-server ...")
     finally:
         stop_server(proc)
+
+
+if __name__ == "__main__":
+    main()

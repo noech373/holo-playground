@@ -11,7 +11,7 @@ from PIL import Image
 
 from holo_playground.report import GRID, INK, MUTED
 
-PREFILL, GEN = "#2a78d6", "#eb6834"  # categorical slots 1 and 2, as in docs/sweep.png
+PREFILL, GEN = "#2a78d6", "#eb6834"  # same colors as docs/sweep.png
 SURFACE = "#fcfcfb"
 
 
@@ -45,18 +45,24 @@ def has_timings(steps: list[dict]) -> bool:
 
 def markdown_table(steps: list[dict], end: dict) -> str:
     if has_timings(steps):
-        rows = ["| step | action | computed tokens (prompt_n) | cached tokens (cache_n) "
-                "| prefill | generation | total |",
-                "|---|---|---|---|---|---|---|"]
+        rows = [
+            "| step | action | computed tokens (prompt_n) | cached tokens (cache_n) "
+            "| prefill | generation | total |",
+            "|---|---|---|---|---|---|---|",
+        ]
         for s in steps:
-            rows.append(f"| {s['step']} | {action(s)} | {s['prompt_n']} | {s['cache_n']} | "
-                        f"{s['prompt_ms'] / 1000:.0f} s | "
-                        f"{s['gen_ms'] / 1000:.0f} s ({s['gen_tokens']} tok) | {s['wall_s']:.0f} s |")
+            rows.append(
+                f"| {s['step']} | {action(s)} | {s['prompt_n']} | {s['cache_n']} | "
+                f"{s['prompt_ms'] / 1000:.0f} s | "
+                f"{s['gen_ms'] / 1000:.0f} s ({s['gen_tokens']} tok) | {s['wall_s']:.0f} s |"
+            )
     else:
         rows = ["| step | action | model call |", "|---|---|---|"]
         rows += [f"| {s['step']} | {action(s)} | {s['wall_s']:.1f} s |" for s in steps]
-    rows.append(f"\n{end['stop_reason']} after {end['n_steps']} steps in {end['total_s']:.0f} s: "
-                f"{end['answer']!r}, success={end['success']}, reached_page={end.get('reached_page')}")
+    rows.append(
+        f"\n{end['stop_reason']} after {end['n_steps']} steps in {end['total_s']:.0f} s: "
+        f"{end['answer']!r}, success={end['success']}, reached_page={end.get('reached_page')}"
+    )
     return "\n".join(rows)
 
 
@@ -68,10 +74,8 @@ def plot_trajectory(steps: list[dict], run_dir: Path, out: Path) -> None:
         with Image.open(run_dir / s["screenshot"]) as img:
             ax.imshow(img)
         if s["x_px"] is not None:
-            ax.scatter([s["x_px"]], [s["y_px"]], s=260, facecolors="none", edgecolors=SURFACE,
-                       linewidths=4.5)
-            ax.scatter([s["x_px"]], [s["y_px"]], s=260, facecolors="none", edgecolors=GEN,
-                       linewidths=2.5)
+            ax.scatter([s["x_px"]], [s["y_px"]], s=260, facecolors="none", edgecolors=SURFACE, linewidths=4.5)
+            ax.scatter([s["x_px"]], [s["y_px"]], s=260, facecolors="none", edgecolors=GEN, linewidths=2.5)
         ax.set_xticks([])
         ax.set_yticks([])
         for spine in ax.spines.values():
@@ -105,10 +109,11 @@ def plot_step_cost(steps: list[dict], out: Path) -> None:
             # The cache only shrinks when the prompt's prefix changed: here, a screenshot evicted.
             if s["cache_n"] < prev["cache_n"] + prev["prompt_n"] - 50:
                 labels[i] += "\n(screenshot evicted)"
-        title = ("Time per agent step (Holo 3.1 9B, CPU), with prompt tokens computed vs. reused "
-                 "from the KV cache")
-        handles = [Patch(color=PREFILL, label="prefill (reading the prompt)"),
-                   Patch(color=GEN, label="generation (writing the step)")]
+        title = "Time per agent step, with prompt tokens computed vs. reused from the KV cache"
+        handles = [
+            Patch(color=PREFILL, label="prefill (reading the prompt)"),
+            Patch(color=GEN, label="generation (writing the step)"),
+        ]
     else:
         tops = [s["wall_s"] for s in steps]
         ax.bar(xs, tops, width=0.55, color=PREFILL)
@@ -116,8 +121,16 @@ def plot_step_cost(steps: list[dict], out: Path) -> None:
         title = "Time per agent step: wall time of each model call (no server timings)"
         handles = []
     for x, top, note in zip(xs, tops, notes, strict=True):
-        ax.annotate(note, (x, top), xytext=(0, 4), textcoords="offset points", ha="center", va="bottom",
-                    fontsize=8, color=MUTED)
+        ax.annotate(
+            note,
+            (x, top),
+            xytext=(0, 4),
+            textcoords="offset points",
+            ha="center",
+            va="bottom",
+            fontsize=8,
+            color=MUTED,
+        )
     ax.set_xticks(list(xs), labels)
     ax.set_ylabel("seconds", color=MUTED)
     ax.set_ylim(0, max(tops) * 1.28)
@@ -138,7 +151,7 @@ def plot_step_cost(steps: list[dict], out: Path) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("trace", type=Path, help="trace.jsonl written by holo-agent (screenshots next to it)")
-    parser.add_argument("--out", type=Path, default=Path("docs"), help="folder for the two PNG files")
+    parser.add_argument("--out", type=Path, default=Path("runs/report"), help="folder for the two PNG files")
     args = parser.parse_args()
 
     steps, end = load(args.trace)

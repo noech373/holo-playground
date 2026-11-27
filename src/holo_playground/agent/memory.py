@@ -10,7 +10,7 @@ EVICTED = "[screenshot evicted]"
 
 @dataclass
 class _Action:
-    raw: str          # the model's exact output, re-sent as is so the KV cache keeps matching
+    raw: str  # the model's exact output, re-sent as is so the KV cache keeps matching
     tool_name: str
     tool_output: str  # what Browser.execute reported
 
@@ -44,7 +44,6 @@ class Memory:
         if len(self._actions) != len(self._observations) - 1:
             raise RuntimeError("add_step without a new observation")
         self._actions.append(_Action(out.raw, out.step.tool_call.tool_name, tool_output))
-
 
     def messages(self) -> list[dict]:
         """Chat messages for the next policy call: must end with an observation."""

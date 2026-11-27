@@ -19,12 +19,14 @@ from holo_playground.locate import draw_clicks, locate
 from holo_playground.screen import Screenshot
 from holo_playground.server import MODELS, server_up, start_server, stop_server
 
+# fmt: off
 FIELDS = [
     "model", "image_max_tokens", "target", "target_w_px", "target_h_px",
     "x", "y", "x_px", "y_px", "hit", "center_dist_px", "edge_dist_px",
     "prefill_tokens", "prefill_s", "prefill_tok_per_s",
     "gen_tokens", "gen_s", "gen_tok_per_s", "total_s",
 ]
+# fmt: on
 
 
 def score(x: float, y: float, box: list[int]) -> dict:
@@ -44,7 +46,7 @@ def run_budget(
     client: OpenAI, screenshot: Screenshot, targets: list[dict], model: str, budget: str
 ) -> Iterator[dict]:
     for target in targets:
-        pred = locate(client, screenshot, target["element"])
+        pred = locate(client, screenshot, target["element"], model=f"holo-3.1-{model}")
         x, y = screenshot.to_pixels(pred.click.x, pred.click.y)
         t = pred.timings
         row = {
@@ -80,9 +82,12 @@ def main() -> None:
     )
     parser.add_argument("image", type=Path, help="screenshot")
     parser.add_argument("targets", type=Path, help="JSON list of {name, element, box: [x0, y0, x1, y1]}")
-    parser.add_argument("--model", choices=MODELS, default="9b")
-    parser.add_argument("--budgets", default="default,1024,512,256,128",
-                        help="comma-separated --image-max-tokens values ('default' = not set)")
+    parser.add_argument("--model", choices=sorted(MODELS), default="9b")
+    parser.add_argument(
+        "--budgets",
+        default="default,1024,512,256,128",
+        help="comma-separated --image-max-tokens values ('default' = not set)",
+    )
     parser.add_argument("--port", type=int, default=8080)
     parser.add_argument("--out-dir", type=Path, default=Path("results"))
     args = parser.parse_args()

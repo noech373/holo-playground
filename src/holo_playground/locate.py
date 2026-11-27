@@ -20,6 +20,7 @@ PROMPT = """Localize an element on the GUI image according to the provided targe
 Your target is:
 {element}"""
 
+
 class Click(BaseModel):
     x: int = Field(ge=0, le=COORD_SCALE, description="X coordinate as integer in [0, 1000]")
     y: int = Field(ge=0, le=COORD_SCALE, description="Y coordinate as integer in [0, 1000]")
@@ -35,7 +36,7 @@ class Prediction:
     timings: dict = field(default_factory=dict)  # llama-server per-request timings
 
 
-def locate(client: OpenAI, screenshot: Screenshot, element: str, *, model: str = "holo") -> Prediction:
+def locate(client: OpenAI, screenshot: Screenshot, element: str, *, model: str) -> Prediction:
     """Return the click predicted for `element`, constrained to valid JSON by the server.
 
     model: llama-server serves a single model and ignores this name; a hosted API needs the real one.
@@ -93,7 +94,7 @@ def main() -> None:
         help="any OpenAI-compatible endpoint: llama-server, or a hosted API",
     )
     parser.add_argument(
-        "--model", default="holo", help="model name (llama-server ignores it, a hosted API needs it)"
+        "--model", default="holo-3.1-9b", help="model name (llama-server ignores it, a hosted API needs it)"
     )
     parser.add_argument(
         "--api-key", default=os.environ.get("HAI_API_KEY", "none"), help="default: $HAI_API_KEY"

@@ -13,5 +13,6 @@ jobs:
       - uses: astral-sh/setup-uv@v10.4.0
       - run: uv sync --locked
       - run: uv run ruff check src tests
+      - run: uv run ruff format --check src tests
       - run: uv run playwright install --with-deps chromium
       - run: uv run pytest -q

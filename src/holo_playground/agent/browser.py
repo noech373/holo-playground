@@ -13,10 +13,10 @@ from playwright.sync_api import sync_playwright
 from holo_playground.agent.actions import ClickArgs, ScrollArgs, WriteArgs
 from holo_playground.screen import Screenshot, to_pixels
 
-SETTLE_S = 0.5                  # pause before and after waiting for the network
+SETTLE_S = 0.5  # pause before and after waiting for the network
 NETWORK_IDLE_TIMEOUT_MS = 5000  # some pages never reach network idle: don't wait forever
-SCROLL_FRACTION = 0.75          # one scroll = 3/4 of the viewport height
-PIXEL_DIFF = 32                 # a pixel "changed" if its gray level moved by more than this (0-255)
+SCROLL_FRACTION = 0.75  # one scroll = 3/4 of the viewport height
+PIXEL_DIFF = 32  # a pixel "changed" if its gray level moved by more than this (0-255)
 MIN_CHANGED_PIXELS = 64
 FOCUS_IS_EDITABLE_JS = """() => {
     const e = document.activeElement;
@@ -37,8 +37,13 @@ class Browser:
     CSS pixels and mouse coordinates are the same thing.
     """
 
-    def __init__(self, allowed_domains: set[str] | frozenset[str], width: int = 1280,
-                 height: int = 800, headless: bool = True) -> None:
+    def __init__(
+        self,
+        allowed_domains: set[str] | frozenset[str],
+        width: int = 1280,
+        height: int = 800,
+        headless: bool = True,
+    ) -> None:
         self.allowed_domains = allowed_domains
         self.width, self.height = width, height
         self._playwright = sync_playwright().start()
@@ -159,6 +164,6 @@ class Browser:
 
     def _unchanged(self, before: Image.Image, after: Image.Image) -> bool:
         """True if the page looks the same (ignores a blinking caret or a small animation)."""
-        changed = ImageChops.difference(before, after).point(lambda v: 255 if v > PIXEL_DIFF else 0) # type: ignore
+        diff = ImageChops.difference(before, after)
+        changed = diff.point(lambda v: 255 if v > PIXEL_DIFF else 0)  # type: ignore[arg-type,operator]
         return changed.histogram()[255] < MIN_CHANGED_PIXELS
-
