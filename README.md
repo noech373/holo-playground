@@ -14,6 +14,7 @@ The agent is written from scratch (Playwright, Pydantic, any OpenAI-compatible e
 - **9B at 512 image tokens is the sweet spot for grounding:** 4/4 targets hit in 50 s per click, against 187 s at full resolution. Below ~512 tokens, accuracy does not degrade gracefully: it collapses.
 - **The agent completes its first task:** "open the Holo 3.1 9B model page and give its license" succeeded in both trials, in 4 steps and ~8.7 minutes each, following the same path both times.
 - **On a CPU, memory management is the cost driver.** Re-using the KV cache keeps a step at 80–100 s. Each time the oldest screenshot is dropped from the history, the cache breaks and the step costs ~190–205 s.
+- **The same agent runs on H's hosted API:** 3/3 trials with `holo3-1-35b-a3b`, in 16–47 s each. The first hosted trial exposed a bug in the evaluator, not in the agent ([details](#same-task-on-hs-api)).
 
 ## Part 1 — Grounding: accuracy vs. image budget
 
@@ -80,7 +81,7 @@ task ──►  screenshot ──► Holo 3.1 9B ──► JSON step ──► P
 - [`memory.py`](src/holo_playground/agent/memory.py) builds the conversation: the task, then each step and its result. Only the last 3 screenshots are kept (`keep_last=3`, as H recommends); older ones become `[screenshot evicted]`, while the model's notes stay.
 - [`policy.py`](src/holo_playground/agent/policy.py) asks the model for the next step; [`run.py`](src/holo_playground/agent/run.py) runs the loop, writes a [JSONL trace](#what-every-trial-records) and checks the answer ([`evaluate.py`](src/holo_playground/agent/evaluate.py)).
 - Tasks are data: [`tasks/hf.json`](tasks/hf.json) gives each one a start URL, an instruction, the allowed domains and an answer check. [`tasks.py`](src/holo_playground/agent/tasks.py) validates the file before the first trial, so a typo fails in a second, not after a night of runs.
-- The model server is a separate process. The agent only knows an OpenAI-compatible URL, so switching to H's hosted API is a command-line flag, not a code change.
+- The model server is a separate process. The agent only knows an OpenAI-compatible URL. The one field it sends beyond the OpenAI API, `chat_template_kwargs: {"enable_thinking": false}`, is accepted by both llama-server and [H's API](#same-task-on-hs-api).
 
 ### First task: find a model's license
 
@@ -109,25 +110,45 @@ Trial of 2026-11-23 16:12 ([trace](results/agent/20261123-161259-holo-license/tr
 - **Generation is the other half: ~35 s per step.** A step is ~125 tokens at ~3.5 tokens/s. The `note` field is about half of them and often re-describes the page instead of recording task facts: the next lever on latency, through the prompt.
 - **The request overhead is negligible.** Wall time equals prefill + generation within a second: HTTP, image encoding to base64 and JSON parsing don't matter; image encoding by the vision encoder is counted in the prefill.
 
+### Same task on H's API
+
+Same agent, same system prompt, same task (temperature 0.8, last 3 screenshots), with `--base-url` pointing to H's API and `holo3-1-35b-a3b`, 3 trials on 2026-11-27 ([traces](results/agent/20261127-091732-holo-license-hosted/)). All three answered with the right license and opened the model page (`success: true`, `reached_page: true`).
+
+| trial | steps | path | end to end | waiting for the model |
+|---|---|---|---|---|
+| 1 | 4 | search bar, type, result, answer | 23 s | 10 s |
+| 2 | 4 | search bar, type, result, answer | 16 s | 7 s |
+| 3 | 6 | scroll twice, "View 39 models", scroll, model link, answer | 47 s | 36 s |
+| *local 9B, for scale* | *4* | *search bar, type, result, answer* | *520 s* | *508 s* |
+
+- **This is not a model comparison:** a 35B-A3B on H's hardware against a 9B on a laptop CPU, on a handful of trials. The image budget also differs: capped at 512 tokens locally, left to the API's default here.
+- **The path varies between trials.** Trial 3 never used the search bar, and still got there.
+- **The browser becomes a large share of the time.** 8–13 s per trial are spent outside model calls (browser launch, page loads, fixed pauses between actions): about half of trials 1 and 2. With fast inference, the environment is worth optimizing too.
+- **One request took 25 s** (trial 3, step 3), against 2–4 s for the others. It was the 11th request in about 40 s, so most likely the free tier's limit of 10 requests per minute: the OpenAI client retries silently, and `wall_s` includes the wait.
+- **A false negative from the evaluator.** The first hosted trial, on 2026-11-26 ([trace](results/agent/20261126-174604-holo-license-hosted/trace.jsonl)), was scored a failure: the agent answered "Apache License 2.0" and the pattern required "2.0" right after "apache". The agent was right, the check was wrong. The pattern was fixed before the three trials above, and that answer is now a test case. The old trace keeps its original verdict.
+
 ### What every trial records
 
-`runs/<stamp>/<task>/trial-<n>/trace.jsonl` gets one line per step, written as soon as the step ends, so a crash or Ctrl-C keeps everything up to that point. Each line has the thought, note and action, the click in pixels, the URL before and after, tokens computed and reused, prefill and generation times, and the screenshot file. A final line holds the answer and two separate verdicts:
+`runs/<stamp>/<task>/trial-<n>/trace.jsonl` gets one line per step, written as soon as the step ends, so a crash or Ctrl-C keeps everything up to that point. Each line has the thought, note and action, the click in pixels, the URL before and after, tokens computed and reused, prefill and generation times, the wall time, and the screenshot file. Token counts and prefill/generation times come from llama-server: they are `null` on H's API. A final line holds the answer and two separate verdicts:
 
-- `success`: the answer matches the task's check (a regular expression on the lowercased answer, so "Apache 2.0" and "The license is apache-2.0" both pass). Running out of steps, or an output that does not parse as a step, counts as a failure (`false`). Only an infrastructure crash gives `null`, so that it is neither counted as an agent failure nor silently dropped.
+- `success`: the answer matches the task's check (a regular expression on the lowercased answer, so "Apache 2.0", "Apache License 2.0" and "The license is apache-2.0" all pass). Running out of steps, or an output that does not parse as a step, counts as a failure (`false`). Only an infrastructure crash gives `null`, so that it is neither counted as an agent failure nor silently dropped.
 - `reached_page`: whether the agent actually opened the page. A correct answer without it would be a guess, or something the model already knew.
 
 ### Caveats
 
-- **One task, two trials.** This shows the loop works and where the time goes, not a success rate. The trace format was added after the first trial: only the second one is in `results/`.
+- **One task, a handful of trials** (two locally, three on H's API, plus the mis-scored one). This shows the loop works and where the time goes, not a success rate.
+- **Only the second local trial has a trace**, since the format was added after the first. That trace predates the automatic verdict (`success: null`, no `reached_page`); re-judged with the current check, it passes and reaches the page.
 - **The first-step prefill varies** from 92 to 107 s with the same 1,511 tokens, depending on free RAM. Single-run timings are indicative.
 - **A string check cannot read negation:** "MIT, not apache-2.0" would pass. A test documents this limit; an LLM judge would be the next step.
-- **Thinking is disabled** (it adds ~50 s per step on this CPU), and the task runs on a live website that can change between trials.
+- **Thinking is disabled**, by `holo-serve` (`--reasoning-budget 0`) and by every agent request (`enable_thinking: false`): it adds ~50 s per step on this CPU.
+- **The task runs on a live website** that can change between trials.
 
 ### Next steps
 
 - A campaign of 5 tasks × 3 trials for a first success rate and a failure classification (wrong click vs. wrong plan, from the click positions and the thoughts).
 - Batched screenshot eviction, measured against `keep_last=3`.
-- The same tasks through H's hosted API (`--base-url`), to separate the model's ability from this laptop's latency.
+- The same campaign on H's API, to separate the model's ability from this laptop's latency.
+- Record the API's token usage in the trace, so that `holo-agent-report` also works on hosted runs.
 - Tracing in [Langfuse](https://langfuse.com) on top of the JSONL trace.
 
 ## Setup
@@ -178,9 +199,20 @@ uv run holo-agent --trials 3                # every task in tasks/hf.json, 3 tri
 uv run holo-agent-report runs/<stamp>/<task>/trial-1/trace.jsonl   # step table + docs/agent-*.png
 ```
 
-Trials are interleaved across tasks (A, B, C, then A, B, C again), so a slow drift over a long campaign, such as CPU throttling, spreads over every task. `--task-id` runs a single task. Each run also saves the server settings (`server.json`), its own settings (`run.json`) and the exact tasks it ran (`tasks.json`).
+`holo-agent-report` overwrites the two figures in `docs/` by default; `--out <folder>` writes them elsewhere.
 
-`holo-agent --base-url … --model … --api-key …` points it at any other OpenAI-compatible endpoint.
+Trials are interleaved across tasks (A, B, C, then A, B, C again), so a slow drift over a long campaign, such as CPU throttling, spreads over every task. `--task-id` runs a single task. Each run also saves the server settings (`server.json`, llama-server only), its own settings (`run.json`) and the exact tasks it ran (`tasks.json`).
+
+**Run the agent on H's API.** No local model or llama.cpp needed. Put `HAI_API_KEY=…` (from [H's platform](https://platform.hcompany.ai)) in a `.env` file, which git ignores:
+
+```bash
+uv run --env-file .env holo-agent --base-url https://api.hcompany.ai/v1/ \
+  --model holo3-1-35b-a3b --no-warmup --trials 3
+```
+
+`holo3-1-35b-a3b` has a free tier, limited to 10 requests per minute ([quickstart](https://hub.hcompany.ai/models-api/quickstart), November 2026). `holo-agent-report` and `holo-locate` do not support the hosted API yet: the first needs llama-server's timings, the second has no option for the key or the model name.
+
+`--base-url`, `--model` and `--api-key` accept other OpenAI-compatible endpoints, provided they support a JSON-schema `response_format` and accept `chat_template_kwargs`. Only llama-server and H's API have been tested.
 
 **Locate a single element** with a `llama-server` already running on port 8080:
 
