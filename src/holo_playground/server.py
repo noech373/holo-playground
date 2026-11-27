@@ -29,6 +29,8 @@ SERVER_FLAGS = [
 DEFAULT_BUDGET = "default"
 STARTUP_TIMEOUT_S = 600  # a cold load of the 9B (weights not in the page cache) took >300 s
 STOP_TIMEOUT_S = 10
+# extra_body of every chat request: llama-server and H's API both read it. H's API thinks by default.
+NO_THINKING = {"chat_template_kwargs": {"enable_thinking": False}}
 
 
 def server_up(port: int) -> bool:
