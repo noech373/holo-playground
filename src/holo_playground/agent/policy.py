@@ -91,6 +91,7 @@ def policy(
         temperature=temperature,
         max_tokens=max_tokens,
         response_format={"type": "json_schema", "json_schema": {"name": "step", "schema": STEP_SCHEMA}},
+        extra_body={"chat_template_kwargs": {"enable_thinking": False}},
     )
     wall_s = time.perf_counter() - start
 
